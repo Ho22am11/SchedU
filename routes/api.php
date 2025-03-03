@@ -5,6 +5,8 @@ use App\Http\Controllers\AcadmicSpaceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\CourseController;
 use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\HallController;
+use App\Http\Controllers\LapController;
 use App\Http\Controllers\LecturerController;
 use App\Http\Controllers\ManagementRoleController;
 use App\Http\Controllers\TermPlansController;
@@ -66,14 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
     ]);
 
 
-    Route::resource('/lecturers', LecturerController::class)
-    ->middleware([
-        'index'   => 'can:view lecturers',
-        'store'   => 'can:create lecturer',
-        'show'    => 'can:show lecturer',
-        'update'  => 'can:update lecturer',
-        'destroy' => 'can:delete lecturer',
-    ]);
+    Route::resource('/lecturers', LecturerController::class);
     
     
     Route::resource('/courses', CourseController::class)
@@ -128,6 +123,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/permission/update', [ManagementRoleController::class, 'updatePermission'])
     ->middleware('can:remove permission');
+
+    Route::resource('/halls' , HallController::class);
+    Route::resource('/laps' , LapController::class);
+    Route::get('/get-lecturers-ByType', [LecturerController::class, 'getStaffByType']);
 
    
 });

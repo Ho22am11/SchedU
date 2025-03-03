@@ -5,12 +5,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Department extends Model
+class AcademicDegree extends Model
 {
     use HasFactory;
-
-    protected $guarded=['id'];
     public $timestamps = false ;
 
+    protected $guarded=['id'];
+
+    protected $fillable = [
+        'name',
+        'name_ar',
+        'prefix',
+        'prefix_ar',
+    ];
    
 }

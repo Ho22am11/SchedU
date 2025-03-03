@@ -14,13 +14,12 @@ return new class extends Migration
         Schema::create('lecturers', function (Blueprint $table) {
             $table->id();
             $table->string('name');
+            $table->string('name_ar');
             $table->unsignedBigInteger('department_id');
             $table->foreign('department_id')->references('id')->on('departments');
-            $table->enum('acdemic_degree' , [ 1 , 2 , 3 , 4 ,5]);
-            $table->time('time_prefrence_start');
-            $table->time('time_prefrence_end');
-            $table->json('days_prefrence');
-            $table->string('type');
+            $table->unsignedBigInteger('academic_id');
+            $table->foreign('academic_id')->references('id')->on('academic_degrees');
+            $table->boolean('isPermanent');
         });
     }
 

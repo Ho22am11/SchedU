@@ -11,11 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('acadmic_spaces', function (Blueprint $table) {
+        Schema::create('time_preferences', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
-            $table->bigInteger('capacity');
-            $table->json('availability');
+            $table->unsignedBigInteger('timeable_id');
+            $table->string('timeable_type');
+            $table->string('day');
+            $table->time('start_time');
+            $table->time('end_time');
         });
     }
 
@@ -24,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('acadmic_spaces');
+        Schema::dropIfExists('time_preferences');
     }
 };

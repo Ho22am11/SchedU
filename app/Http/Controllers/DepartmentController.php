@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\DepartmentResource;
 use App\Models\Department;
 use App\Traits\ApiResponseTrait;
 use Illuminate\Http\Request;
@@ -12,7 +13,7 @@ class DepartmentController extends Controller
     public function index()
     {
         $department = Department::all();
-        return $this->ApiResponse($department , 'get departments successfully' , 200);
+        return $this->ApiResponse(DepartmentResource::collection($department) , 'get departments successfully' , 200);
     }
 
    
@@ -21,14 +22,14 @@ class DepartmentController extends Controller
     public function store(Request $request)
     {
         $department = Department::create($request->all());
-        return $this->ApiResponse($department , 'stored department successfully' , 201);
+        return $this->ApiResponse(new DepartmentResource($department) , 'stored department successfully' , 201);
     }
 
     
     public function show( $id)
     {
-        $spaces = Department::find($id);
-        return $this->ApiResponse($spaces , 'showed department successfully' , 200);
+        $department = Department::find($id);
+        return $this->ApiResponse(new DepartmentResource($department) , 'showed department successfully' , 200);
 
     }
 
@@ -37,9 +38,9 @@ class DepartmentController extends Controller
     
     public function update(Request $request,  $id)
     {
-        $departments = Department::find($id);
-        $departments->update($request->all());
-        return $this->ApiResponse($departments , 'updated department successfully' , 200);
+        $department = Department::find($id);
+        $department->update($request->all());
+        return $this->ApiResponse(new DepartmentResource($department) , 'updated department successfully' , 200);
 
     }
 

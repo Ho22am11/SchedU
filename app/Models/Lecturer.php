@@ -34,4 +34,14 @@ class Lecturer extends Model
    {
     return $this->hasMany(Term_item::class);
    }
+
+   public function academicDegree()
+   {
+       return $this->belongsTo(AcademicDegree::class, 'academic_id');
+   }
+   
+   public function timePreferences()
+    {
+        return $this->morphMany(TimePreference::class, 'timeable');
+    }
 }
