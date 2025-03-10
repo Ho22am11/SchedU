@@ -19,7 +19,7 @@ class LabResource extends JsonResource
        return array_merge($data , [
         'name' => $this->name ,
         'capacity' => $this->capacity ,
-        'labType' => $this->MaplapType($this->labType) ,
+        'labType' => $this->labType ,
         'usedInNonSpecialistCourses' => $this->usedInNonSpecialistCourses ,
         'time_preferences' => $this->timePreferences ,
     ]);

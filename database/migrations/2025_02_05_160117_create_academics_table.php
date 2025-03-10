@@ -14,6 +14,9 @@ return new class extends Migration
         Schema::create('academics', function (Blueprint $table) {
             $table->id();
             $table->string('name');
+            $table->string('name_ar');
+            $table->unsignedBigInteger('department_id');
+            $table->foreign('department_id')->references('id')->on('departments');
         });
     }
 

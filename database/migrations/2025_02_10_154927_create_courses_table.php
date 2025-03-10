@@ -13,14 +13,15 @@ return new class extends Migration
     {
       Schema::create('courses', function (Blueprint $table) {
     $table->id();
-    $table->string('code')->unique();
+    $table->string('code');
     $table->text('name_ar'); 
     $table->text('name_en'); 
     $table->text('practical_components'); 
     $table->integer('lecture_hours');
     $table->integer('practical_hours'); 
     $table->integer('credit_hours');
-    $table->softDeletes();
+    $table->unsignedBigInteger('academic_id')->nullable();
+    $table->foreign('academic_id')->references('id')->on('academics')->onDelete('cascade');
 });
     }
 

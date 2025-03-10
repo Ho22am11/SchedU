@@ -9,15 +9,6 @@ class Academic extends Model
 {
     use HasFactory;
 
-
-    // protected $fillable =[''];
-   // if the name of the table is different from the model name
-
-    // protected $table="";
-
-
-
-   //? to make all fields mass assignable else id
     protected $guarded=['id'];
     public $timestamps = false ;
 
@@ -25,7 +16,12 @@ class Academic extends Model
 
     public function courses()
     {
-        return $this->belongsToMany(Course::class, 'academic_items', 'academic_id', 'course_id');
+        return $this->hasMany(Course::class, 'academic_id');
+    }
+
+    public function department()
+    {
+        return $this->belongsTo(Department::class);
     }
    
 }

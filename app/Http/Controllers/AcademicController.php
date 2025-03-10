@@ -2,11 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\AcademicResource;
 use App\Models\Academic;
 use App\Models\Academic_item;
+use App\Models\Course;
 use App\Traits\ApiResponseTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\DB;
+
 
 class AcademicController extends Controller
 {
@@ -14,17 +18,52 @@ class AcademicController extends Controller
 
     public function index()
     {
-        
-        $data = Academic::all();
-        return $this->ApiResponse($data , 'get academics successfully' , 200);
+
+        $academics = Academic::with(['department', 'courses'])->get();
+
+    $data = $academics->map(function($academic) {
+        return [
+            'name'            => $academic->name,
+            'name_ar'            => $academic->name_ar,
+            'department'      => optional($academic->department)->name,
+            'department_ar'      => optional($academic->department)->name_ar,
+            'number_of_courses' => $academic->courses->count(),
+        ];
+    });
+
+    return $this->ApiResponse($data, 'get academics successfully', 200);
     }
 
 
    
     public function store(Request $request)
     {
-        $data = Academic::create($request->all());
-        return $this->ApiResponse($data , 'stored academics successfully' , 201);
+        DB::transaction(function() use ($request, &$academic) {
+            $academic = Academic::create([
+                'name'         => $request['nameEn'],
+                'name_ar'      => $request['nameAr'],
+                'department_id'=> $request['departmentId'],
+            ]);
+
+            foreach ($request['courses'] as $courseData) {
+                Course::create([
+                    'code'               => $courseData['code'],
+                    'name_en'            => $courseData['nameEn'],
+                    'name_ar'            => $courseData['nameAr'],
+                    'lecture_hours'      => $courseData['lectureHours'],
+                    'practical_hours'    => $courseData['practicalHours'],
+                    'credit_hours'       => $courseData['creditHours'],
+                    'practical_components' => $courseData['preRequisiteCourseCode'] ?? '',
+                    'academic_id'        => $academic->id,
+                ]);
+            }
+        });
+
+        $academicWithCourses = Academic::find($academic->id);
+
+        return $this->ApiResponse(new AcademicResource($academicWithCourses) , 'get academics successfully' , 200);
+
+    
     }
 
     
@@ -32,22 +71,46 @@ class AcademicController extends Controller
     {
         $data = Academic::with('courses')->find($id);
 
-        return $this->ApiResponse($data , 'showed academics successfully' , 200);
+        return $this->ApiResponse(new AcademicResource($data) , 'showed academics successfully' , 200);
 
     }
 
 
     public function update(Request $request, $id)
-    {
-        $data = Academic::find($id);
 
-        
-        if (!$data) {
-            return $this->ApiResponse(null, 'academics not found', 404);
+{
+
+
+    DB::transaction(function () use ($request, $id, &$academic) {
+        $academic = Academic::findOrFail($id);
+
+        $academic->update([
+            'name'         => $request['nameEn'],
+            'name_ar'      => $request['nameAr'],
+            'department_id'=> $request['departmentId'],
+        ]);
+
+        $academic->courses()->delete();
+        foreach ($request['courses'] as $courseData) {
+            Course::create([
+                'code'                => $courseData['code'],
+                'name_en'             => $courseData['nameEn'],
+                'name_ar'             => $courseData['nameAr'],
+                'lecture_hours'       => $courseData['lectureHours'],
+                'practical_hours'     => $courseData['practicalHours'],
+                'credit_hours'        => $courseData['creditHours'],
+                'practical_components'=> $courseData['preRequisiteCourseCode'] ?? '',
+                'academic_id'         => $academic->id,
+            ]);
         }
-
-        $data->update($request->all());
-        return $this->ApiResponse($data, 'Updated academics successfully', 200);
+    });
+    
+    $updatedAcademic = Academic::with('courses')->findOrFail($id);
+    
+    
+    
+    
+        return $this->ApiResponse($updatedAcademic, 'Updated academics successfully', 200);
     }
 
     
@@ -59,15 +122,4 @@ class AcademicController extends Controller
     }
 
 
-    public function AddCourse(Request $request){
-        $cousrs = Academic_item::create($request->all());
-        return $this->ApiResponse( null , 'add cousrs to academics successfully' , 201);
-
-    }
-
-    public function RemoveCourse($id){
-        Academic_item::destroy($id);
-        return $this->ApiResponse( null , 'delete remove course successfully' , 200);
-
-    }
 }

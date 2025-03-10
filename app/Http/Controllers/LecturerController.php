@@ -130,6 +130,7 @@ class LecturerController extends Controller
     
     $staff = $query->get();
     
-    return response()->json($staff, 200);
+    return $this->ApiResponse( $staff, 'get lecturer successfully' , 200);
+
 }
 }

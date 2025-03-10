@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->integer('capacity');
-            $table->boolean('labType');
+            $table->string('labType');
             $table->boolean('usedInNonSpecialistCourses')->default(true);
         });
     }

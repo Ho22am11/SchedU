@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AcademicController;
+use App\Http\Controllers\AcademicDegreeController;
 use App\Http\Controllers\AcadmicSpaceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\CourseController;
@@ -9,6 +10,7 @@ use App\Http\Controllers\HallController;
 use App\Http\Controllers\LapController;
 use App\Http\Controllers\LecturerController;
 use App\Http\Controllers\ManagementRoleController;
+use App\Http\Controllers\StudyPlaneController;
 use App\Http\Controllers\TermPlansController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -80,14 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
         'destroy' => 'can:delete course',
     ]);
     
-    Route::resource('/academics', AcademicController::class)
-    ->middleware([
-        'index'   => 'can:view academics',
-        'store'   => 'can:create academic',
-        'show'    => 'can:show academic',
-        'update'  => 'can:update academic',
-        'destroy' => 'can:delete academic',
-    ]);
+    Route::resource('/academics', AcademicController::class);
     
     Route::post('/academics/add-course', [AcademicController::class, 'AddCourse'])
     ->middleware('can:add course to academic');
@@ -95,20 +90,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/academics/remove-course/{id}', [AcademicController::class, 'RemoveCourse'])
     ->middleware('can:remove course from academic');
     
-    Route::resource('/term-plans', TermPlansController::class)
-    ->middleware([
-        'index'   => 'can:view term plans',
-        'store'   => 'can:create term plan',
-        'show'    => 'can:show term plan',
-        'update'  => 'can:update term plan',
-        'destroy' => 'can:delete term plan',
-    ]);
+    Route::resource('/study-plans', StudyPlaneController::class);
     
-    Route::post('/term-plans/add-item', [TermPlansController::class, 'AddItem'])
-    ->middleware('can:add item to term plan');
-    
-    Route::delete('/term-plans/remove-item/{id}', [TermPlansController::class, 'RemoveItem'])
-    ->middleware('can:remove item from term plan');
+
     
     Route::get('/term-plans/show-item/{id}', [TermPlansController::class, 'ShowItem'])
     ->middleware('can:show term plan item');
@@ -127,6 +111,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::resource('/halls' , HallController::class);
     Route::resource('/laps' , LapController::class);
     Route::get('/get-lecturers-ByType', [LecturerController::class, 'getStaffByType']);
+    Route::get('/academic-degrees', [AcademicDegreeController::class, 'index']);
 
    
 });

@@ -13,16 +13,13 @@ return new class extends Migration
     {
         Schema::create('term_items', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('term_id');
-            $table->unsignedBigInteger('course_id');
+            $table->string('name');
+            $table->string('name_ar');
+            $table->unsignedBigInteger('academic_id');
+            $table->enum('academicLevel' , [ 1 , 2, 3, 4 ]);
             $table->unsignedBigInteger('lecturer_id');
             $table->unsignedBigInteger('spaces_id');
-            $table->integer('start_time');
-            $table->integer('end_time');
-            $table->enum('day' , [ 1, 2, 3, 4, 5, 6, 7]);
-            $table->boolean('type');
-            $table->foreign('term_id')->references('id')->on('term_plans')->cascadeOnDelete();
-            $table->foreign('course_id')->references('id')->on('courses')->cascadeOnDelete();
+            $table->foreign('academic_id')->references('id')->on('academics')->cascadeOnDelete();
             $table->foreign('lecturer_id')->references('id')->on('lecturers')->cascadeOnDelete();
             $table->foreign('spaces_id')->references('id')->on('acadmic_spaces')->cascadeOnDelete();
         });
