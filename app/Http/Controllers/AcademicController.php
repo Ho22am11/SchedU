@@ -23,8 +23,8 @@ class AcademicController extends Controller
 
     $data = $academics->map(function($academic) {
         return [
-            'name'            => $academic->name,
-            'name_ar'            => $academic->name_ar,
+            'nameEn'            => $academic->name,
+            'nameAr'            => $academic->name_ar,
             'department'      => optional($academic->department)->name,
             'department_ar'      => optional($academic->department)->name_ar,
             'number_of_courses' => $academic->courses->count(),

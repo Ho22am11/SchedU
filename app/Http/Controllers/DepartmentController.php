@@ -12,8 +12,16 @@ class DepartmentController extends Controller
     use ApiResponseTrait ;
     public function index()
     {
-        $department = Department::all();
-        return $this->ApiResponse(DepartmentResource::collection($department) , 'get departments successfully' , 200);
+        $departments = Department::all();
+
+        $data = $departments->map(function($academic) {
+            return [
+                'id' => $academic->id,
+                'nameEn'  => $academic->name,
+                'nameAr'  => $academic->name_ar,
+            ];
+        });
+        return $this->ApiResponse( $data , 'get departments successfully' , 200);
     }
 
    

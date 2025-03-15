@@ -14,6 +14,7 @@ class HallController extends Controller
     public function index()
     {
         $halls = Hall::all();
+        $halls->load('timePreferences');
         return $this->ApiResponse($halls , 'get halls successfully' , 200);
 
     }
