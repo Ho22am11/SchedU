@@ -40,7 +40,7 @@ class Lecturer extends Model
        return $this->belongsTo(AcademicDegree::class, 'academic_id');
    }
    
-   public function timePreferences()
+   public function timingPreference()
     {
         return $this->morphMany(TimePreference::class, 'timeable');
     }

@@ -19,7 +19,7 @@ class Lap extends Model
         'usedInNonSpecialistCourses'
     ];
    
-    public function timePreferences()
+    public function availability()
     {
         return $this->morphMany(TimePreference::class, 'timeable');
     }

@@ -14,7 +14,7 @@ class HallController extends Controller
     public function index()
     {
         $halls = Hall::all();
-        $halls->load('timePreferences');
+        $halls->load('availability');
         return $this->ApiResponse($halls , 'get halls successfully' , 200);
 
     }
@@ -36,14 +36,14 @@ class HallController extends Controller
                 ]);
 
                 foreach ($hallData['availability'] as $timePref) {
-                    $hall->timePreferences()->create([
+                    $hall->availability()->create([
                         'day' => $timePref['day'],
-                        'start_time' => $timePref['startTime'],
-                        'end_time' => $timePref['endTime'],
+                        'startTime' => $timePref['startTime'],
+                        'endTime' => $timePref['endTime'],
                     ]);
                 }
 
-                $hallsCreated[] = $hall->load('timePreferences');
+                $hallsCreated[] = $hall->load('availability');
             }
         });
 
@@ -57,7 +57,7 @@ class HallController extends Controller
 
     public function show( $id)
     {
-        $hall = Hall::with('timePreferences')->find($id);
+        $hall = Hall::with('availability')->find($id);
         return $this->ApiResponse($hall , 'get hall successfully' , 200);
 
     }
@@ -74,18 +74,19 @@ class HallController extends Controller
                 'capacity' => $request['capacity'],
             ]);
     
-            $hall->timePreferences()->delete();
+            $hall->availability()->delete();
     
+        
             foreach ($request['availability'] as $timePref) {
-                $hall->timePreferences()->create([
-                    'day'        => $timePref['day'],
-                    'start_time' => $timePref['startTime'],
-                    'end_time'   => $timePref['endTime'],
+                $hall->availability()->create([
+                    'day' => $timePref['day'],
+                    'startTime' => $timePref['startTime'],
+                    'endTime' => $timePref['endTime'],
                 ]);
             }
         });
     
-        $hall = Hall::with('timePreferences')->find($id);
+        $hall = Hall::with('availability')->find($id);
     
         return $this->ApiResponse($hall, 'updated hall  successfully', 200);
     }
@@ -95,7 +96,7 @@ class HallController extends Controller
     public function destroy( $id)
     {
         $hall = Hall::findOrFail($id);
-        $hall->timePreferences()->delete();
+        $hall->availability()->delete();
         $hall->delete();
         return $this->ApiResponse(null , 'deleted hall  successfully', 200);
 

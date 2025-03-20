@@ -16,7 +16,7 @@ class LapController extends Controller
 
     public function index()
     {
-        $labs = Lap::with('timePreferences')->get();
+        $labs = Lap::with('availability')->get();
         return $this->ApiResponse( LabResource::collection($labs), 'get labs successfully', 200);
     }
 
@@ -35,14 +35,14 @@ class LapController extends Controller
                 ]);
     
                 foreach ($labData['availability'] as $timePref) {
-                    $lap->timePreferences()->create([
+                    $lap->availability()->create([
                         'day' => $timePref['day'],
-                        'start_time' => $timePref['startTime'],
-                        'end_time' => $timePref['endTime'],
+                        'startTime' => $timePref['startTime'],
+                    'endTime' => $timePref['endTime'],
                     ]);
                 }
     
-                $lepsCreated[] = $lap->load('timePreferences');
+                $lepsCreated[] = $lap->load('availability');
             }
         });
     
@@ -52,7 +52,7 @@ class LapController extends Controller
 
     public function show($id)
     {
-        $lap = Lap::with('timePreferences')->find($id);
+        $lap = Lap::with('availability')->find($id);
         return $this->ApiResponse(new LabResource($lap), 'created labs successfully', 201);
 
     }
@@ -70,18 +70,18 @@ class LapController extends Controller
                 'usedInNonSpecialistCourses' => $request['usedInNonSpecialistCourses'],
             ]);
     
-            $lap->timePreferences()->delete();
+            $lap->availability()->delete();
     
             foreach ($request['availability'] as $timePref) {
-                $lap->timePreferences()->create([
+                $lap->availability()->create([
                     'day'        => $timePref['day'],
-                    'start_time' => $timePref['startTime'],
-                    'end_time'   => $timePref['endTime'],
+                  'startTime' => $timePref['startTime'],
+                    'endTime' => $timePref['endTime'],
                 ]);
             }
         });
     
-        $lap = Lap::with('timePreferences')->find($id);
+        $lap = Lap::with('availability')->find($id);
     
         return $this->ApiResponse(new LabResource($lap), 'updated lab  successfully', 200);
     }
@@ -89,7 +89,7 @@ class LapController extends Controller
     public function destroy(string $id)
     {
         $lap = Lap::findOrFail($id);
-        $lap->timePreferences()->delete();
+        $lap->availability()->delete();
         $lap->delete();
         return $this->ApiResponse(null , 'deleted lab  successfully', 200);    }
 }

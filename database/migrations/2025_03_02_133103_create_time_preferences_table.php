@@ -16,8 +16,8 @@ return new class extends Migration
             $table->unsignedBigInteger('timeable_id');
             $table->string('timeable_type');
             $table->string('day');
-            $table->time('start_time');
-            $table->time('end_time');
+            $table->string('startTime', 5); 
+            $table->string('endTime', 5); 
         });
     }
 

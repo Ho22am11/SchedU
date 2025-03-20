@@ -14,7 +14,7 @@ class Hall extends Model
 
     protected $fillable = ['id', 'name', 'capacity'];
 
-    public function timePreferences()
+    public function availability()
     {
         return $this->morphMany(TimePreference::class, 'timeable');
     }

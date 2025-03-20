@@ -13,7 +13,7 @@ class TimePreference extends Model
     public $timestamps = false ;
 
 
-    protected $fillable = ['day', 'start_time', 'end_time'];
+    protected $fillable = ['day', 'startTime', 'endTime'];
 
     public function timeable()
     {

@@ -21,7 +21,7 @@ class LabResource extends JsonResource
         'capacity' => $this->capacity ,
         'labType' => $this->labType ,
         'usedInNonSpecialistCourses' => $this->usedInNonSpecialistCourses ,
-        'time_preferences' => $this->timePreferences ,
+        'availability' => $this->availability ,
     ]);
 
     }

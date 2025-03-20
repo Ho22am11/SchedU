@@ -13,12 +13,12 @@ class LecturerController extends Controller
     use ApiResponseTrait ;
     public function index()
     {
-        $lecturers = Lecturer::with(['department', 'timePreferences', 'academicDegree'])->get();
+        $lecturers = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->get();
         $data = $lecturers->map(function ($lecturer) {
             return [
                 'id' => $lecturer->id,
-                'nameEn' => $lecturer->name,
-                'nameAr' => $lecturer->name_ar,
+                'name' => $lecturer->name,
+                'name_ar' => $lecturer->name_ar,
                 'department' => [
                     'id' => optional($lecturer->department)->id,
                     'name' => optional($lecturer->department)->name,
@@ -29,12 +29,14 @@ class LecturerController extends Controller
                     'prefix' => optional($lecturer->academicDegree)->prefix,
                 ],
                 'isPermanent' => $lecturer->isPermanent,
-                'timePreferences' => $lecturer->timePreferences->map(function ($time) {
+                'timingPreference' => $lecturer->timingPreference->map(function ($time) {
                     return [
                         'id' => $time->id,
                         'day' => $time->day,
                         'start_time' => $time->start_time,
                         'end_time' => $time->end_time,
+                        'startTime' => $time->startTime,
+                    'endTime' =>$time->endTime,
                     ];
                 }),
             ];
@@ -62,13 +64,13 @@ class LecturerController extends Controller
                 ]);
 
                 foreach ($staffData['timingPreference'] as $tp) {
-                    $staffMember->timePreferences()->create([
+                    $staffMember->timingPreference()->create([
                         'day'         => $tp['day'],
-                        'start_time'  => $tp['startTime'],
-                        'end_time'    => $tp['endTime'],
+                        'startTime' => $tp['startTime'],
+                        'endTime' => $tp['endTime'],
                     ]);
                 }
-                $createdStaff[] = $staffMember->load(['department', 'timePreferences', 'academicDegree']);
+                $createdStaff[] = $staffMember->load(['department', 'timingPreference', 'academicDegree']);
             }
         });
 
@@ -78,7 +80,7 @@ class LecturerController extends Controller
     
     public function show( $id)
     {
-        $lecturer = Lecturer::with(['department', 'timePreferences', 'academicDegree'])->find($id); 
+        $lecturer = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->find($id); 
     if (!$lecturer) {
         return $this->ApiResponse(null, 'Lecturer not found', 404);
     }
@@ -92,10 +94,8 @@ class LecturerController extends Controller
         $updatedLecturer = [];
     
         DB::transaction(function() use ($request, $id) {
-            // جلب سجل المُحاضر المطلوب للتحديث
             $lecturer = Lecturer::findOrFail($id);
     
-            // تحديث الحقول الأساسية
             $lecturer->update([
                 'name'           => $request['name'],
                 'name_ar'        => $request['name_ar'] ?? null,
@@ -104,20 +104,18 @@ class LecturerController extends Controller
                 'isPermanent'    => $request['isPermanent'],
             ]);
     
-            // حذف التفضيلات الزمنية القديمة
-            $lecturer->timePreferences()->delete();
+            $lecturer->timingPreference()->delete();
     
-            // إنشاء التفضيلات الزمنية الجديدة
             foreach ($request['timingPreference'] as $tp) {
-                $lecturer->timePreferences()->create([
+                $lecturer->timingPreference()->create([
                     'day'         => $tp['day'],
-                    'start_time'  => $tp['startTime'],
-                    'end_time'    => $tp['endTime'],
+                    'startTime' => $tp['startTime'],
+                    'endTime' => $tp['endTime'],
                 ]);
             }
         });
 
-        $updatedLecturer = Lecturer::with(['department', 'timePreferences', 'academicDegree'])->findOrFail($id);
+        $updatedLecturer = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->findOrFail($id);
 
     
         return $this->ApiResponse(new lecturerResource($updatedLecturer), 'lecturer updated successfully', 200);
@@ -127,7 +125,7 @@ class LecturerController extends Controller
     public function destroy( $id)
     { 
         $lecturer = Lecturer::findOrFail($id);
-        $lecturer->timePreferences()->delete();
+        $lecturer->timingPreference()->delete();
         $lecturer->delete();
         return $this->ApiResponse( null , 'delete lecturer successfully' , 200);
 
@@ -136,18 +134,16 @@ class LecturerController extends Controller
 
     public function getStaffByType(Request $request)
 {
-    $type = $request->query('type', ''); // يمكن أن تكون "lecturer" أو "teaching_assistant"
+    $type = $request->query('type', ''); 
     
     $query = Lecturer::with(['department', 'academicDegree', 'timePreferences']);
     
     if ($type === 'lecturer') {
-        // درجات المحاضرين
         $lecturerDegrees = ['professor', 'associate professor', 'assistant professor'];
         $query->whereHas('academicDegree', function($q) use ($lecturerDegrees) {
             $q->whereIn('name', $lecturerDegrees);
         });
     } elseif ($type === 'teaching_assistant') {
-        // درجات معيدي التدريس
         $taDegrees = ['assistant lecturer', 'teaching assistant'];
         $query->whereHas('academicDegree', function($q) use ($taDegrees) {
             $q->whereIn('name', $taDegrees);

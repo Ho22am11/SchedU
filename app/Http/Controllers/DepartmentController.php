@@ -14,14 +14,8 @@ class DepartmentController extends Controller
     {
         $departments = Department::all();
 
-        $data = $departments->map(function($academic) {
-            return [
-                'id' => $academic->id,
-                'nameEn'  => $academic->name,
-                'nameAr'  => $academic->name_ar,
-            ];
-        });
-        return $this->ApiResponse( $data , 'get departments successfully' , 200);
+       
+        return $this->ApiResponse(  DepartmentResource::collection($departments), 'get departments successfully' , 200);
     }
 
    

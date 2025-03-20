@@ -22,7 +22,7 @@ class lecturerResource extends JsonResource
             'department'      => new DepartmentResource($this->whenLoaded('department')),
             'academic_degree' => new AcademicDegreeResource($this->whenLoaded('academicDegree')),
             'isPermanent'     => $this->isPermanent,
-            'timePreferences' => $this->timePreferences
+            'timingPreference' => $this->timingPreference
         ];
 
     }
