@@ -17,8 +17,8 @@ class LecturerController extends Controller
         $data = $lecturers->map(function ($lecturer) {
             return [
                 'id' => $lecturer->id,
-                'name' => $lecturer->name,
-                'name_ar' => $lecturer->name_ar,
+                'nameEn' => $lecturer->name,
+                'nameAr' => $lecturer->name_ar,
                 'department' => [
                     'id' => optional($lecturer->department)->id,
                     'name' => optional($lecturer->department)->name,
@@ -33,8 +33,6 @@ class LecturerController extends Controller
                     return [
                         'id' => $time->id,
                         'day' => $time->day,
-                        'start_time' => $time->start_time,
-                        'end_time' => $time->end_time,
                         'startTime' => $time->startTime,
                     'endTime' =>$time->endTime,
                     ];
@@ -54,10 +52,11 @@ class LecturerController extends Controller
         $createdStaff = [];
 
         DB::transaction(function() use ($request, &$createdStaff) {
+
             foreach ($request['staff'] as $staffData) {
                 $staffMember = Lecturer::create([
-                    'name'              => $staffData['name'],
-                    'name_ar'           => $staffData['name_ar'] ?? null,
+                    'name'              => $staffData['nameEn'],
+                    'name_ar'           => $staffData['nameAr'] ?? null,
                     'department_id'     => $staffData['department_id'],
                     'academic_id'=> $staffData['academic_degree_id'],
                     'isPermanent'       => $staffData['isPermanent'],
@@ -97,8 +96,8 @@ class LecturerController extends Controller
             $lecturer = Lecturer::findOrFail($id);
     
             $lecturer->update([
-                'name'           => $request['name'],
-                'name_ar'        => $request['name_ar'] ?? null,
+                'name'           => $request['nameEn'],
+                'name_ar'        => $request['nameAr'] ?? null,
                 'department_id'  => $request['department_id'],
                 'academic_id'    => $request['academic_degree_id'],
                 'isPermanent'    => $request['isPermanent'],
@@ -136,7 +135,7 @@ class LecturerController extends Controller
 {
     $type = $request->query('type', ''); 
     
-    $query = Lecturer::with(['department', 'academicDegree', 'timePreferences']);
+    $query = Lecturer::with(['department', 'academicDegree', 'timingPreference']);
     
     if ($type === 'lecturer') {
         $lecturerDegrees = ['professor', 'associate professor', 'assistant professor'];
@@ -152,7 +151,7 @@ class LecturerController extends Controller
     
     $staff = $query->get();
     
-    return $this->ApiResponse( $staff, 'get lecturer successfully' , 200);
+    return $this->ApiResponse(  lecturerResource::collection($staff), 'get lecturer successfully' , 200);
 
 }
 }
