@@ -14,33 +14,8 @@ class LecturerController extends Controller
     public function index()
     {
         $lecturers = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->get();
-        $data = $lecturers->map(function ($lecturer) {
-            return [
-                'id' => $lecturer->id,
-                'nameEn' => $lecturer->name,
-                'nameAr' => $lecturer->name_ar,
-                'department' => [
-                    'id' => optional($lecturer->department)->id,
-                    'name' => optional($lecturer->department)->name,
-                ],
-                'academic_degree' => [
-                    'id' => optional($lecturer->academicDegree)->id,
-                    'name' => optional($lecturer->academicDegree)->name,
-                    'prefix' => optional($lecturer->academicDegree)->prefix,
-                ],
-                'isPermanent' => $lecturer->isPermanent,
-                'timingPreference' => $lecturer->timingPreference->map(function ($time) {
-                    return [
-                        'id' => $time->id,
-                        'day' => $time->day,
-                        'startTime' => $time->startTime,
-                    'endTime' =>$time->endTime,
-                    ];
-                }),
-            ];
-        });
     
-        return $this->ApiResponse($data, 'get lecturers successfully', 200);
+        return $this->ApiResponse(lecturerResource::collection($lecturers), 'get lecturers successfully', 200);
 
         
     }

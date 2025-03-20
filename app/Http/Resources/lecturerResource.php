@@ -19,6 +19,8 @@ class lecturerResource extends JsonResource
         return [
             'id'              => $this->id,
             'name'            => $locale === 'ar' ? $this->name_ar : $this->name,
+            'nameEn' => $this->name,
+            'nameAr' => $this->name_ar,
             'department'      => new DepartmentResource($this->whenLoaded('department')),
             'academic_degree' => new AcademicDegreeResource($this->whenLoaded('academicDegree')),
             'isPermanent'     => $this->isPermanent,
