@@ -18,6 +18,8 @@ class DepartmentResource extends JsonResource
         return [
             'id'   => $this->id,
             'name' => $locale === 'ar' ? $this->name_ar : $this->name,
+            'nameEn' => $this->name , 
+            'nameAr' => $this->name_ar , 
         ];
     }
 }

@@ -17,9 +17,12 @@ class AcademicResource extends JsonResource
         $locale = $request->header('Accept-Language', 'en');
 
         return [
+            'id' => $this->id ,
             'name' => $locale === 'ar' ? $this->name_ar : $this->name,
-            'department' => $locale === 'ar' ?  $this->department->name_ar : $this->name,
-            'courses' => $this->courses ,
+            'nameEn' => $this->name , 
+            'nameAr' => $this->name_ar , 
+            'department' =>  new DepartmentResource($this->department),
+            'courses' => CourseResource::collection($this->courses) ,
 
         ];
     }

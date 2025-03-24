@@ -15,8 +15,15 @@ class StudyplanResource extends JsonResource
         return [
             'id'               => $this->id,
             'name'             => $locale === 'ar' ? $this->name_ar : $this->name_en,
-            'academic'         => $this->whenLoaded('academic', function () use ($request, $locale) {
-                return $locale === 'ar' ? $this->academic->name_ar : $this->academic->name;
+            'nameEn' => $this->name_en , 
+            'nameAr' => $this->name_ar , 
+            'academic' => $this->whenLoaded('academic', function () use ($request, $locale) {
+                return [
+                    'id' => $this->academic->id,
+                    'name' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name,
+                    'nameEn' =>  $this->academic->name , 
+                    'nameAr' => $this->academic->name_ar , 
+                ];
             }),
             'academicLevel'    => 'Level ' . $this->academicLevel,
             'expectedStudents' => $this->expected_students,

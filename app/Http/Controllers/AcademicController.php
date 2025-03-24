@@ -16,23 +16,27 @@ class AcademicController extends Controller
 {
     use ApiResponseTrait ;
 
-    public function index()
-    {
+    public function index(Request $request)
+{
+    $academics = Academic::with(['department', 'courses'])->get();
 
-        $academics = Academic::with(['department', 'courses'])->get();
+    $data = $academics->map(function($academic) use ($request) {
+        $locale = $request->header('Accept-Language', 'en');
 
-    $data = $academics->map(function($academic) {
         return [
-            'nameEn'            => $academic->name,
-            'nameAr'            => $academic->name_ar,
-            'department'      => optional($academic->department)->name,
-            'department_ar'      => optional($academic->department)->name_ar,
+            'id' =>  $academic->id, 
+            'name'  => $locale === 'ar' ? $academic->name_ar : $academic->name,
+            'nameEn'  => $academic->name,
+            'nameAr'  => $academic->name_ar,
+            'department'  => $locale === 'ar' ? $academic->department->name_ar : $academic->department->name,
             'number_of_courses' => $academic->courses->count(),
         ];
     });
-
     return $this->ApiResponse($data, 'get academics successfully', 200);
-    }
+
+
+}
+
 
 
    
@@ -110,7 +114,7 @@ class AcademicController extends Controller
     
     
     
-        return $this->ApiResponse($updatedAcademic, 'Updated academics successfully', 200);
+        return $this->ApiResponse(new AcademicResource($updatedAcademic), 'Updated academics successfully', 200);
     }
 
     

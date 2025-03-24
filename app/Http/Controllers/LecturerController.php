@@ -112,7 +112,7 @@ class LecturerController extends Controller
     
     $query = Lecturer::with(['department', 'academicDegree', 'timingPreference']);
     
-    if ($type === 'lecturer') {
+    if ($type === 'lecturers') {
         $lecturerDegrees = ['professor', 'associate professor', 'assistant professor'];
         $query->whereHas('academicDegree', function($q) use ($lecturerDegrees) {
             $q->whereIn('name', $lecturerDegrees);
