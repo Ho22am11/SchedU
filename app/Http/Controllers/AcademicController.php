@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\AcademicResource;
+use App\Http\Resources\DepartmentResource;
 use App\Models\Academic;
 use App\Models\Academic_item;
 use App\Models\Course;
@@ -28,7 +29,7 @@ class AcademicController extends Controller
             'name'  => $locale === 'ar' ? $academic->name_ar : $academic->name,
             'nameEn'  => $academic->name,
             'nameAr'  => $academic->name_ar,
-            'department'  => $locale === 'ar' ? $academic->department->name_ar : $academic->department->name,
+            'department'  => new DepartmentResource($academic->department),
             'number_of_courses' => $academic->courses->count(),
         ];
     });
