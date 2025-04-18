@@ -19,21 +19,8 @@ class StudyPlaneController extends Controller
     {
         $studyPlans = StudyPlane::with('academic')->get();
     
-        $data = $studyPlans->map(function($plan) use ($request) {
-            $locale = $request->header('Accept-Language', 'en');
     
-            return [
-                'id' => $plan->id,
-                'name' => $locale === 'ar' ? $plan->name_ar : $plan->name_en,
-                'academicList' => $locale === 'ar'
-                    ? optional($plan->academic)->name_ar
-                    : optional($plan->academic)->name_en,
-                'academicLevel' => $plan->academicLevel,
-                'expectedStudents' => $plan->expected_students,
-            ];
-        });
-    
-        return $this->ApiResponse($data, 'get study plans successfully', 200);
+        return $this->ApiResponse(  StudyplanResource::collection($studyPlans), 'get study plans successfully', 200);
     }
 
     public function create()

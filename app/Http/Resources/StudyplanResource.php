@@ -17,7 +17,7 @@ class StudyplanResource extends JsonResource
             'name'             => $locale === 'ar' ? $this->name_ar : $this->name_en,
             'nameEn' => $this->name_en , 
             'nameAr' => $this->name_ar , 
-            'academic' => $this->whenLoaded('academic', function () use ($request, $locale) {
+            'academicList' => $this->whenLoaded('academic', function () use ($request, $locale) {
                 return [
                     'id' => $this->academic->id,
                     'name' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name,

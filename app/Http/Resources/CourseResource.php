@@ -14,7 +14,10 @@ class CourseResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $locale = $request->header('Accept-Language', 'en');
+
         return [
+            'name' => $locale === 'ar' ? $this->name_ar : $this->name_en,
             'id'                   => $this->id,
             'code'                 => $this->code,
             'nameAr'              => $this->name_ar,
