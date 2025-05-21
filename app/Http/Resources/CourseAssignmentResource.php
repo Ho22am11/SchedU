@@ -15,7 +15,8 @@ class CourseAssignmentResource extends JsonResource
 
         return [
             'id' => $this->id ,
-            'course_id'               => $this->course_id,
+            'course_id'=> $this->course_id,
+            'courseCode'=> $this->course->code,
 
             'course' => $this->whenLoaded('course', function() use ($locale) {
                 return [ 'name' => $locale === 'ar' ? $this->course->name_ar : $this->course->name_en,
