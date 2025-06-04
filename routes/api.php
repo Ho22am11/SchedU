@@ -10,6 +10,7 @@ use App\Http\Controllers\HallController;
 use App\Http\Controllers\LapController;
 use App\Http\Controllers\LecturerController;
 use App\Http\Controllers\ManagementRoleController;
+use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\StudyPlaneController;
 use App\Http\Controllers\TermPlansController;
 use Illuminate\Http\Request;
@@ -115,6 +116,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
    
 });
+    Route::resource('/schedules' , ScheduleController::class);
 
 
 
