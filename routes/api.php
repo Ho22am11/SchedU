@@ -11,10 +11,12 @@ use App\Http\Controllers\LapController;
 use App\Http\Controllers\LecturerController;
 use App\Http\Controllers\ManagementRoleController;
 use App\Http\Controllers\ScheduleController;
+use App\Http\Controllers\ScheduleExportController;
 use App\Http\Controllers\StudyPlaneController;
 use App\Http\Controllers\TermPlansController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+
 
 
 /*
@@ -117,6 +119,9 @@ Route::middleware('auth:sanctum')->group(function () {
    
 });
     Route::resource('/schedules' , ScheduleController::class);
+    Route::get('/schedule/pdf', [ScheduleExportController::class, 'exportPdf']);
+    Route::get('/schedule/excel', [ScheduleExportController::class, 'exportExcel']);
+
 
 
 
