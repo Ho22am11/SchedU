@@ -6,11 +6,13 @@ use App\Http\Controllers\AcadmicSpaceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\CourseController;
 use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\ExportController;
 use App\Http\Controllers\HallController;
 use App\Http\Controllers\LapController;
 use App\Http\Controllers\LecturerController;
 use App\Http\Controllers\ManagementRoleController;
 use App\Http\Controllers\ScheduleController;
+use App\Http\Controllers\ScheduleExportController;
 use App\Http\Controllers\StudyPlaneController;
 use App\Http\Controllers\TermPlansController;
 use Illuminate\Http\Request;
@@ -117,7 +119,10 @@ Route::middleware('auth:sanctum')->group(function () {
    
 });
     Route::resource('/schedules' , ScheduleController::class);
+    Route::get('/schedule/{id}/export-pdf', [ExportController::class, 'exportPdf']);
+Route::get('/schedule/{id}/preview', [ExportController::class, 'previewSchedule']);
 
+        Route::get('/schedule/pdf', [ScheduleExportController::class, 'exportPdf']);
 
 
 
