@@ -9,23 +9,32 @@ use Mpdf\Mpdf;
 
 class ExportController extends Controller
 {
-    private function loadData($scheduleId)
+   
+
+private function loadData($scheduleId)
 {
-    // جلب البيانات من قاعدة البيانات مع كل الـ relationships
     $schedule = Schedule::with([
         'entries.course',
         'entries.lecturer.academicDegree', 
         'entries.hall',
-        'entries.lap', // لاحظ إنه lap مش lab
+        'entries.lap',
         'entries.department'
     ])->findOrFail($scheduleId);
+
+
+    
+    if ($schedule->entries->isEmpty()) {
+        \Log::warning('No entries found for schedule ID: ' . $scheduleId);
+    }
 
     return $schedule->entries;
 }
 
-private function buildTable($scheduleId)
+private function buildTable($scheduleId , string $locale)
 {
-    $sessions = $this->loadData($scheduleId);
+
+
+    $sessions = $this->loadData($scheduleId );
     $days = ['sunday' => 'الأحد', 'monday' => 'الاثنين', 'tuesday' => 'الثلاثاء', 'wednesday' => 'الأربعاء', 'thursday' => 'الخميس'];
     $timeSlots = ['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00'];
 
@@ -37,36 +46,62 @@ private function buildTable($scheduleId)
     }
 
     foreach ($sessions as $s) {
-        // بناء الـ time slot من البيانات
-        $slot = "{$s->startTime}-{$s->endTime}";
-        $day = strtolower($s->Day);
-        $dayAr = $days[$day] ?? '';
-    
-        // استخدام البيانات من الـ relationships
-        $name = $s->course->nameAr ?? $s->course->name;
-        $type = $s->session_type; 
-        $courseKey = $s->course->code; 
-    
-        // المحاضر
-        $teacher = ($s->lecturer->academicDegree->prefix ?? '') . ' ' . $s->lecturer->name;
+        \log::info('Processing session:', [
+            'id' => $s->id,
+            'course_id' => $s->course_id,
+            'day' => $s->Day,
+            'start_time' => $s->startTime,
+            'end_time' => $s->endTime,
+            'session_type' => $s->session_type
+        ]);
+
+        $start = substr($s->startTime, 0, 5);
+        $end   = substr($s->endTime,   0, 5);
+        $slot  = "{$start}-{$end}";
+
+         $dayEn = strtolower($s->Day);
+        $dayAr = $days[$dayEn] ?? null;
+
+        if (empty($dayAr)) {
+            \Log::warning('Day not found in mapping:', ['day' => $s->Day]);
+            continue;
+        }
+
         
-        // تحديد المكان (قاعة أو معمل)
-        $room = '';
+         if ($s->academic) {
+            $academic_name = $locale === 'en' ? $s->academic->name : $s->academic->name_ar;
+
+        }
+
+    
+        
+            $name = $locale === 'en' ? $s->course->name_en.' ('.$s->course->code.' )' : '( '.$s->course->code.' )  ' .$s->course->name_ar ;
+            
+            $courseKey = $s->course->code;
+        
+        
+        
+        $type = $s->session_type ?? 'unknown'; 
+    
+        $teacher = 'غير محدد';
+        if ($s->lecturer) {
+            $prefix = $locale === 'en' ? $s->lecturer->academicDegree->prefix : $s->lecturer->academicDegree->prefix_ar ;
+            $teacher = $locale === 'en' ? $prefix . ' ' . $s->lecturer->name : $prefix . ' ' . $s->lecturer->name_ar;
+        }
+        
+        $room = 'غير محدد';
         if ($s->session_type === 'lecture' && $s->hall) {
-            $room = $s->hall->name;
+            $room = $locale === 'en' ? 'hall' .' '.$s->hall->name : 'قاعه'.' '.$s->hall->name;
         } elseif ($s->session_type === 'lab' && $s->lap) {
-            $room = $s->lap->name;
+            $room = $locale === 'en' ? 'lab' .' '.$s->lap->name : 'معمل'.' '.$s->lap->name ;
         }
     
-        // بناء النص للخلية
-        $entry = "$name<br>$teacher<br>قاعة $room";
+        $entry = "$academic_name<br>$name<br>$teacher<br> $room<br>";
         
-        // إضافة معلومات المجموعة إذا كانت موجودة
         if ($s->group_number && $s->total_groups > 1) {
             $entry .= "<br>مجموعة {$s->group_number} من {$s->total_groups}";
         }
     
-        // إضافة الـ entry للجدول
         if (empty($table[$slot][$dayAr])) {
             $table[$slot][$dayAr] = [
                 'html' => [$entry],
@@ -81,17 +116,20 @@ private function buildTable($scheduleId)
     return $table;
 }
 
-public function exportPdf($scheduleId)
+public function exportPdf( Request $request , $scheduleId)
 {
-    $table = $this->buildTable($scheduleId);
+
+     $locale = $request->header('Accept-Language', 'en');
+
+      app()->setLocale($locale);
+
+    $table = $this->buildTable($scheduleId , $locale  );
     $days = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس'];
     $timeSlots = ['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00'];
 
-    // جلب معلومات الجدول للعنوان
     $schedule = Schedule::findOrFail($scheduleId);
     $scheduleTitle = $schedule->nameAr ?? $schedule->nameEn ?? 'جدول المحاضرات الأسبوعي';
 
-    // بدء الـ HTML مع تنسيق الطباعة والهوامش
     $html = '
     <style>
         body { font-family: "Arial"; direction: rtl; }
@@ -105,7 +143,6 @@ public function exportPdf($scheduleId)
     </style>
     ';
 
-    // اللوجو
     $logoPath = storage_path('app/public/logo1.png');
     $base64Logo = '';
     if (file_exists($logoPath)) {
@@ -121,7 +158,6 @@ public function exportPdf($scheduleId)
         <div style="clear: both;"></div>
     </div>';
 
-    // معلومات إضافية عن الجدول
     $totalSessions = $schedule->entries->count();
     $totalCourses = $schedule->entries->groupBy('course_id')->count();
     
@@ -130,7 +166,6 @@ public function exportPdf($scheduleId)
         <p>إجمالي الجلسات: ' . $totalSessions . ' | إجمالي المقررات: ' . $totalCourses . '</p>
     </div>';
 
-    // بناء الجدول
     $html .= '<table><thead><tr><th>اليوم \ الوقت</th>';
     foreach ($timeSlots as $slot) {
         $html .= "<th>$slot</th>";
@@ -163,7 +198,6 @@ public function exportPdf($scheduleId)
 
     $html .= '</tbody></table>';
 
-    // إعداد mPDF وتحديد الصفحة أفقياً + منع التقطيع
     $mpdf = new Mpdf([
         'mode' => 'utf-8',
         'format' => 'A4-L',
@@ -183,14 +217,5 @@ public function exportPdf($scheduleId)
         ->header('Content-Disposition', 'attachment; filename="' . $fileName . '"');
 }
 
-// دالة مساعدة لعرض الجدول في المتصفح للمراجعة قبل التصدير
-public function previewSchedule($scheduleId)
-{
-    $table = $this->buildTable($scheduleId);
-    $schedule = Schedule::findOrFail($scheduleId);
-    $days = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس'];
-    $timeSlots = ['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00'];
 
-    return view('schedule.preview', compact('table', 'schedule', 'days', 'timeSlots'));
-}
 }
