@@ -1,0 +1,8 @@
+        Route::get('/schedule/pdf', [ScheduleExportController::class, 'exportPdf']);
+        Route::get('/schedule/excel', [ScheduleExportController::class, 'exportExcel']);
+
+
+
+
+composer require phpoffice/phpspreadsheet
+composer require mpdf/mpdf

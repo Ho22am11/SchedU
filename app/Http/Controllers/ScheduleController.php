@@ -63,7 +63,7 @@ class ScheduleController extends Controller
 
    public function show(Request $request, $id)
 {
-    $schedule = Schedule::with(['entries.course', 'entries.lab', 'entries.hall', 'entries.lecturer.academicDegree'])
+    $schedule = Schedule::with(['entries.course', 'entries.lap', 'entries.hall', 'entries.lecturer.academicDegree'])
         ->findOrFail($id);
 
     $staffId = $request->query('staff_id');
