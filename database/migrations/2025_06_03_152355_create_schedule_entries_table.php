@@ -19,7 +19,8 @@ return new class extends Migration
             $table->unsignedTinyInteger('total_groups');
 
             $table->foreignId('hall_id')->nullable()->constrained()->cascadeOnDelete();
-            $table->foreignId('lap_id')->nullable()->constrained()->cascadeOnDelete();
+            $table->unsignedBigInteger('lap_id');
+            $table->foreign('lap_id')->nullable()->references('id')->on('laps');
             $table->foreignId('lecturer_id')->constrained()->cascadeOnDelete();
             $table->foreignId('department_id')->constrained()->cascadeOnDelete();
 

@@ -24,40 +24,40 @@ class ScheduleController extends Controller
 
 
     public function store(StoreScheduleRequest $request)
-    {
-      
-        
-        $schedule = Schedule::create([
-            'nameEn' => $request->nameEn,
-            'nameAr' => $request->nameAr,
+{
+    $schedule = Schedule::create([
+        'nameEn' => $request->nameEn,
+        'nameAr' => $request->nameAr,
+    ]);
+
+    foreach ($request->schedule as $entry) {
+        $schedule->entries()->create([
+            'course_id'     => $entry['course_id'],
+            'session_type'  => $entry['session_type'],
+            'group_number'  => $entry['group_info']['group_number'],
+            'total_groups'  => $entry['group_info']['total_groups'],
+            'hall_id'       => $entry['hall_id'],
+            'lap_id'        => $entry['lab_id'],             // لاحظ: JSON فيه lab_id، والعمود اسمه lap_id
+            'lecturer_id'   => $entry['lecturer_id'],
+            'Day'           => $entry['time_slot']['day'],
+            'startTime'     => $entry['time_slot']['start_time'],
+            'endTime'       => $entry['time_slot']['end_time'],
+            'student_count' => $entry['student_count'],
+            'academic_id'   => $entry['academic_id'],
+            'academic_level'=> $entry['academic_level'],
+            'department_id' => $entry['department_id'],
         ]);
-        
-        foreach ($request->entries as $entry) {
-            $schedule->entries()->create([
-                'course_id' => $entry['course_id'],
-                'session_type' => $entry['session_type'],
-                'group_number' => $entry['group_number'],
-                'total_groups' => $entry['total_groups'],
-                'hall_id' => $entry['hall_id'] ?? null,
-                'lap_id' => $entry['lap_id'] ?? null,
-                'lecturer_id' => $entry['lecturer_id'],
-                'Day' => $entry['Day'],
-                'startTime' => $entry['startTime'],
-                'endTime' => $entry['endTime'],
-                'student_count' => $entry['student_count'],
-                'academic_id' => $entry['academic_id'],
-                'academic_level' => $entry['academic_level'],
-                'department_id' => $entry['department_id'],
-            ]);
-        }
-        
-        $schedule = Schedule::with([
-            'entries.lecturer.academicDegree',
-            ])->findOrFail($schedule->id);
-            
-            return $this->ApiResponse(new ScheduleResource($schedule->load('entries')) , 'schedule stored successffly' , 201);
-            
-        }
+    }
+
+    $schedule = Schedule::with(['entries.lecturer.academicDegree'])
+                        ->findOrFail($schedule->id);
+
+    return $this->ApiResponse(
+        new ScheduleResource($schedule->load('entries')),
+        'Schedule stored successfully',
+        201
+    );
+}
         
 
 
@@ -90,31 +90,46 @@ class ScheduleController extends Controller
     return new ScheduleResource($schedule);
 }
 
-    public function update(StoreScheduleRequest $request, $id)
-    {
-        $validated = $request->validated();
-        
-        $schedule = Schedule::findOrFail($id);
-        
-        $schedule->update([
-            'nameEn' => $validated['nameEn'],
-            'nameAr' => $validated['nameAr'],
+   public function update(StoreScheduleRequest $request, $id)
+{
+    $validated = $request->validated();
+
+    $schedule = Schedule::findOrFail($id);
+
+    $schedule->update([
+        'nameEn' => $validated['nameEn'],
+        'nameAr' => $validated['nameAr'],
+    ]);
+
+    $schedule->entries()->delete();
+
+    foreach ($validated['schedule'] as $entry) {
+        $schedule->entries()->create([
+            'course_id'     => $entry['course_id'],
+            'session_type'  => $entry['session_type'],
+            'group_number'  => $entry['group_info']['group_number'],
+            'total_groups'  => $entry['group_info']['total_groups'],
+            'hall_id'       => $entry['hall_id']        ?? null,
+            'lap_id'        => $entry['lab_id']         ?? null,  // لاحظ اسم الحقل map مع lap_id
+            'lecturer_id'   => $entry['lecturer_id'],
+            'Day'           => $entry['time_slot']['day'],
+            'startTime'     => $entry['time_slot']['start_time'],
+            'endTime'       => $entry['time_slot']['end_time'],
+            'student_count' => $entry['student_count'],
+            'academic_id'   => $entry['academic_id'],
+            'academic_level'=> $entry['academic_level'],
+            'department_id' => $entry['department_id'],
         ]);
-        
-        $schedule->entries()->delete();
-        
-        foreach ($validated['entries'] as $entry) {
-            $schedule->entries()->create($entry);
-        }
-        
-        $schedule->load(['entries.lecturer.academicDegree']);
-        
-        return $this->ApiResponse(
-            new ScheduleResource($schedule),
-            'Schedule updated successfully',
-            200
-        );
     }
+
+    $schedule->load(['entries.lecturer.academicDegree']);
+
+    return $this->ApiResponse(
+        new ScheduleResource($schedule),
+        'Schedule updated successfully',
+        200
+    );
+}
     
     
     

@@ -19,7 +19,7 @@ class ScheduleEntry extends Model
         return $this->belongsTo(Hall::class);
     }
 
-    public function lab(){
+    public function lap(){
         return $this->belongsTo(Lap::class);
     }
 

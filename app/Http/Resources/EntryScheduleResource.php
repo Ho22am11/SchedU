@@ -18,7 +18,7 @@ class EntryScheduleResource extends JsonResource
                 'group_number' => $this->group_number,
                 'total_groups' => $this->total_groups,
             ],
-            'lab' => $this->lab ? $this->lab : null  ,
+            'lab' => $this->lap ? $this->lap : null  ,
             'hall' => $this->hall ? $this->hall : null  ,
             'staff' => [
                 'name'=> $locale === 'ar' ? $this->Lecturer->name_ar : $this->Lecturer->name,
@@ -27,8 +27,8 @@ class EntryScheduleResource extends JsonResource
             ],
             'time_slot ' => [
                 'Day' => $this->Day,
-                'startTime' => $this->startTime,
-                'endTime' => $this->endTime,
+                 'start_time' => \Str::substr($this->startTime, 0, 5),
+                  'end_time'   => \Str::substr($this->endTime,   0, 5),
             ],
             'student_count' => $this->student_count,
             'academic_id' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name ,
