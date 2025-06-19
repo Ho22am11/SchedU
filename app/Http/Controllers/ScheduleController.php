@@ -17,7 +17,7 @@ class ScheduleController extends Controller
     {
         $schedules = Schedule::latest()->get();
 
-        return $this->ApiResponse($schedules , 'schedule stored successffly' , 201);
+        return $this->ApiResponse(ScheduleResource::collection($schedules) , 'schedule stored successffly' , 201);
 
     
     }

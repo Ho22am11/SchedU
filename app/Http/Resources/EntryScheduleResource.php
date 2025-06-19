@@ -28,11 +28,15 @@ class EntryScheduleResource extends JsonResource
             ],
             'time_slot ' => [
                 'day' => $this->Day,
-                 'start_time' => \Str::substr($this->startTime, 0, 5),
-                  'end_time'   => \Str::substr($this->endTime,   0, 5),
+                 'startTime ' => \Str::substr($this->startTime, 0, 5),
+                  'endTime'   => \Str::substr($this->endTime,   0, 5),
+            ],
+            'academic_list' => [
+                'name' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name,
+                 'nameEn ' => $this->academic->name_ar ,
+                 'nameAr'   => $this->academic->name ,
             ],
             'student_count' => $this->student_count,
-            'academic_id' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name ,
             'academic_level' => $this->academic_level ,
             'department' => $this->department ,
             
