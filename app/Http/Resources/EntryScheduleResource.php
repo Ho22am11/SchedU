@@ -32,13 +32,14 @@ class EntryScheduleResource extends JsonResource
                   'endTime'   => \Str::substr($this->endTime,   0, 5),
             ],
             'academic_list' => [
+                'id' => $this->academic->id ,
                 'name' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name,
                  'nameEn' => $this->academic->name ,
                  'nameAr'   => $this->academic->name_ar ,
             ],
             'student_count' => $this->student_count,
             'academic_level' => $this->academic_level ,
-            'department' => $this->department ,
+            'department' => new DepartmentResource($this->department) ,
             
 
         ];

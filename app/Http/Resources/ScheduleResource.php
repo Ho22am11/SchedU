@@ -23,6 +23,7 @@ class ScheduleResource extends JsonResource
             'name' => $locale === 'ar' ? $this->nameAr : $this->nameEn,
             'nameAr' => $this->nameAr,
             'nameEn' => $this->nameEn,
+            'create_at' => $this->created_at ,
             'entries' => EntryScheduleResource::collection($this->whenLoaded('entries')),
             'metadata' => $this->whenLoaded('entries', function () use ($entries) {
             return [
@@ -36,6 +37,7 @@ class ScheduleResource extends JsonResource
                     ->count(),
                 'total_staff' => $entries->pluck('lecturer_id')->unique()->count(),
             ];
+
             }),
         ];
     }
