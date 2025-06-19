@@ -23,6 +23,10 @@ class ScheduleEntry extends Model
         return $this->belongsTo(Lap::class);
     }
 
+    public function lab(){
+        return $this->belongsTo(Lap::class);
+    }
+
     public function Lecturer(){
         return $this->belongsTo(Lecturer::class);
     }

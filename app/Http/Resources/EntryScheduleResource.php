@@ -26,15 +26,15 @@ class EntryScheduleResource extends JsonResource
                 'academic_degree' => new AcademicDegreeResource($this->Lecturer->academicDegree),
 
             ],
-            'time_slot ' => [
+            'time_slot' => [
                 'day' => $this->Day,
-                 'startTime ' => \Str::substr($this->startTime, 0, 5),
+                 'startTime' => \Str::substr($this->startTime, 0, 5),
                   'endTime'   => \Str::substr($this->endTime,   0, 5),
             ],
             'academic_list' => [
                 'name' => $locale === 'ar' ? $this->academic->name_ar : $this->academic->name,
-                 'nameEn ' => $this->academic->name_ar ,
-                 'nameAr'   => $this->academic->name ,
+                 'nameEn' => $this->academic->name ,
+                 'nameAr'   => $this->academic->name_ar ,
             ],
             'student_count' => $this->student_count,
             'academic_level' => $this->academic_level ,

@@ -122,7 +122,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/schedule/{id}/export-pdf', [ExportController::class, 'exportPdf']);
 Route::get('/schedule/{id}/preview', [ExportController::class, 'previewSchedule']);
 
-        Route::get('/schedule/pdf', [ScheduleExportController::class, 'exportPdf']);
+Route::get('/schedule/pdf', [ScheduleExportController::class, 'exportPdf']);
+
+// تصدير عام (بدون تصفية)
+Route::get('/export/pdf', [ScheduleExportController::class, 'exportPdf']);
+Route::get('/export/excel', [ScheduleExportController::class, 'exportExcel']);
+
+// تصدير جدول محاضر معين
+Route::get('/export/pdf/lecturer/{id}', [ScheduleExportController::class, 'exportPdfLecturer']);
+Route::get('/export/excel/lecturer/{id}', [ScheduleExportController::class, 'exportExcelLecturer']);
+
+// تصدير جدول قاعة معينة
+Route::get('/export/pdf/hall/{id}', [ScheduleExportController::class, 'exportPdfHall']);
+Route::get('/export/excel/hall/{id}', [ScheduleExportController::class, 'exportExcelHall']);
+
+// تصدير جدول معمل معين
+Route::get('/export/pdf/lab/{id}', [ScheduleExportController::class, 'exportPdfLab']);
+Route::get('/export/excel/lab/{id}', [ScheduleExportController::class, 'exportExcelLab']);
 
 
 
