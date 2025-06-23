@@ -1,0 +1,13 @@
+{
+  "current_step": 6,
+  "total_steps": 6,
+  "percentage": 100.0,
+  "step_description": "Complete",
+  "success": true,
+  "output_files": [
+    "schedule_20250613_224300.json",
+    "schedule_report_20250613_224300.txt"
+  ],
+  "timestamp": "2025-06-13T22:43:03.557725",
+  "elapsed_time": 48.37528
+}

@@ -1,0 +1,21 @@
+{
+  "current_step": 1,
+  "total_steps": 6,
+  "percentage": 16.666666666666664,
+  "step_description": "Fetching study plans",
+  "message": "Fetching 1 study plans",
+  "details": {},
+  "scheduling_details": {
+    "current_study_plan": 0,
+    "total_study_plans": 0,
+    "current_study_plan_name": "",
+    "current_blocks_scheduled": 0,
+    "total_blocks_in_current_plan": 0,
+    "total_blocks_scheduled": 0,
+    "total_blocks_overall": 0,
+    "current_attempt": 0,
+    "scheduling_phase": "initializing"
+  },
+  "timestamp": "2025-06-23T08:07:17.263179",
+  "elapsed_time": 0.001006
+}

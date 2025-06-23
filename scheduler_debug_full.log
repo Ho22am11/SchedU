@@ -1,0 +1,96 @@
+2025-06-23 08:07:17,261 - LogSetup - INFO - setup_logging:839 - === COMPREHENSIVE LOGGING SETUP COMPLETE ===
+2025-06-23 08:07:17,261 - LogSetup - INFO - setup_logging:840 - All logs will be saved to: scheduler_debug_full.log
+2025-06-23 08:07:17,261 - LogSetup - INFO - setup_logging:841 - This file will contain ALL debugging information
+2025-06-23 08:07:17,261 - LogSetup - INFO - setup_logging:842 - ============================================================
+2025-06-23 08:07:17,262 - main - INFO - main:861 - === SCHEDULE GENERATION ENGINE STARTING ===
+2025-06-23 08:07:17,262 - main - INFO - main:862 - Study plans: [1]
+2025-06-23 08:07:17,262 - main - INFO - main:863 - Schedule name (EN): svjl
+2025-06-23 08:07:17,262 - main - INFO - main:864 - Schedule name (AR): fdsadkj
+2025-06-23 08:07:17,262 - main - INFO - main:865 - Verbose: False
+2025-06-23 08:07:17,262 - ScheduleGenerationEngine - INFO - __init__:220 - INITIALIZATION: study_plan_ids=[1]
+2025-06-23 08:07:17,262 - ScheduleGenerationEngine - INFO - __init__:221 - INITIALIZATION: schedule_name_en=svjl
+2025-06-23 08:07:17,262 - ScheduleGenerationEngine - INFO - __init__:222 - INITIALIZATION: schedule_name_ar=fdsadkj
+2025-06-23 08:07:17,262 - ScheduleGenerationEngine - INFO - run:227 - === STARTING SCHEDULE GENERATION ENGINE ===
+2025-06-23 08:07:17,262 - ProgressTracker - INFO - update_progress:63 - PROGRESS UPDATE: Step 0/6 - Initializing
+2025-06-23 08:07:17,262 - ProgressTracker - INFO - update_progress:66 - PROGRESS MESSAGE: Starting schedule generation engine
+2025-06-23 08:07:17,263 - ScheduleGenerationEngine - INFO - _fetch_study_plans:270 - === FETCHING STUDY PLANS ===
+2025-06-23 08:07:17,263 - ProgressTracker - INFO - update_progress:63 - PROGRESS UPDATE: Step 1/6 - Fetching study plans
+2025-06-23 08:07:17,263 - ProgressTracker - INFO - update_progress:66 - PROGRESS MESSAGE: Fetching 1 study plans
+2025-06-23 08:07:17,263 - ScheduleGenerationEngine - INFO - _fetch_study_plans:275 - Requesting study plans with IDs: [1]
+2025-06-23 08:07:17,263 - backend.get_study_plans - INFO - get_study_plans_by_ids:270 - === FETCHING STUDY PLANS BY IDS ===
+2025-06-23 08:07:17,264 - backend.get_study_plans - INFO - get_study_plans_by_ids:271 - Requested IDs: [1]
+2025-06-23 08:07:17,264 - backend.get_study_plans - INFO - get_study_plans_by_ids:272 - Resolve references: True
+2025-06-23 08:07:17,264 - backend.get_study_plans - INFO - get_study_plans_by_ids:277 - 
+Fetching study plan ID: 1
+2025-06-23 08:07:17,264 - backend.get_study_plans - INFO - get_study_plan_by_id:93 - === FETCHING STUDY PLAN BY ID: 1 ===
+2025-06-23 08:07:17,264 - backend.get_study_plans - INFO - get_study_plan_by_id:94 - Resolve references: True
+2025-06-23 08:07:17,269 - urllib3.connectionpool - DEBUG - _new_conn:241 - Starting new HTTP connection (1): 127.0.0.1:8000
+2025-06-23 08:07:17,270 - ScheduleGenerationEngine - ERROR - _fetch_study_plans:351 - Failed to fetch study plans: HTTPConnectionPool(host='127.0.0.1', port=8000): Max retries exceeded with url: /api/login (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001D638AD1540>: Failed to establish a new connection: [WinError 10106] The requested service provider could not be loaded or initialized'))
+Traceback (most recent call last):
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connection.py", line 198, in _new_conn
+    sock = connection.create_connection(
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\util\connection.py", line 85, in create_connection
+    raise err
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\util\connection.py", line 64, in create_connection
+    sock = socket.socket(af, socktype, proto)
+  File "C:\laragon\bin\python\python-3.10\lib\socket.py", line 232, in __init__
+    _socket.socket.__init__(self, family, type, proto, fileno)
+OSError: [WinError 10106] The requested service provider could not be loaded or initialized
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connection.py", line 445, in request
+    self.endheaders()
+  File "C:\laragon\bin\python\python-3.10\lib\http\client.py", line 1277, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+  File "C:\laragon\bin\python\python-3.10\lib\http\client.py", line 1037, in _send_output
+    self.send(msg)
+  File "C:\laragon\bin\python\python-3.10\lib\http\client.py", line 975, in send
+    self.connect()
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connection.py", line 276, in connect
+    self.sock = self._new_conn()
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connection.py", line 213, in _new_conn
+    raise NewConnectionError(
+urllib3.exceptions.NewConnectionError: <urllib3.connection.HTTPConnection object at 0x000001D638AD1540>: Failed to establish a new connection: [WinError 10106] The requested service provider could not be loaded or initialized
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\requests\adapters.py", line 667, in send
+    resp = conn.urlopen(
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\urllib3\util\retry.py", line 519, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='127.0.0.1', port=8000): Max retries exceeded with url: /api/login (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001D638AD1540>: Failed to establish a new connection: [WinError 10106] The requested service provider could not be loaded or initialized'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\laragon\www\SchedU\script\main.py", line 276, in _fetch_study_plans
+    self.study_plans = get_study_plans_by_ids(
+  File "E:\laragon\www\SchedU\script\backend\get_study_plans.py", line 278, in get_study_plans_by_ids
+    study_plan = get_study_plan_by_id(plan_id, resolve_refs=resolve_refs)
+  File "E:\laragon\www\SchedU\script\backend\get_study_plans.py", line 97, in get_study_plan_by_id
+    token = get_auth_token()
+  File "E:\laragon\www\SchedU\script\backend\login.py", line 39, in get_auth_token
+    _AUTH_TOKEN = login()
+  File "E:\laragon\www\SchedU\script\backend\login.py", line 17, in login
+    response = requests.post(
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\requests\api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\requests\api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "C:\laragon\bin\python\python-3.10\lib\site-packages\requests\adapters.py", line 700, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPConnectionPool(host='127.0.0.1', port=8000): Max retries exceeded with url: /api/login (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001D638AD1540>: Failed to establish a new connection: [WinError 10106] The requested service provider could not be loaded or initialized'))
+2025-06-23 08:07:17,435 - main - INFO - main:876 - === SCHEDULE GENERATION ENGINE FINISHED: SUCCESS=False ===

@@ -13,6 +13,7 @@ use App\Http\Controllers\LecturerController;
 use App\Http\Controllers\ManagementRoleController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\ScheduleExportController;
+use App\Http\Controllers\ScriptController;
 use App\Http\Controllers\StudyPlaneController;
 use App\Http\Controllers\TermPlansController;
 use Illuminate\Http\Request;
@@ -53,7 +54,6 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 
 
-Route::middleware('auth:sanctum')->group(function () {
     Route::resource('/acadmic-spaces', AcadmicSpaceController::class)
         ->middleware([
             'index'   => 'can:view academic spaces',
@@ -117,7 +117,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/academic-degrees', [AcademicDegreeController::class, 'index']);
 
    
-});
     Route::resource('/schedules' , ScheduleController::class);
     Route::get('/schedule/{id}/export-pdf', [ExportController::class, 'exportPdf']);
 Route::get('/schedule/{id}/preview', [ExportController::class, 'previewSchedule']);
@@ -139,6 +138,8 @@ Route::get('/export/excel/hall/{id}', [ScheduleExportController::class, 'exportE
 // تصدير جدول معمل معين
 Route::get('/export/pdf/lab/{id}', [ScheduleExportController::class, 'exportPdfLab']);
 Route::get('/export/excel/lab/{id}', [ScheduleExportController::class, 'exportExcelLab']);
+
+Route::post('/script/run', [ScriptController::class, 'run']);
 
 
 
