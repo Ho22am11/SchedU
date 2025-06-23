@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "total_sessions": 1,
+    "total_courses": 1,
+    "total_rooms": 1,
+    "total_staff": 1,
+    "generation_timestamp": "2025-06-23T23:26:11.463879"
+  },
+  "schedule": [
+    {
+      "block_id": "L_CS01rgd_1_1",
+      "course_code": "CS01rgd",
+      "session_type": "lecture",
+      "group_info": {
+        "group_number": 1,
+        "total_groups": 1
+      },
+      "room": {
+        "composite_id": "hall_3",
+        "id": 3,
+        "name": "102",
+        "capacity": 514,
+        "type": "hall"
+      },
+      "staff": {
+        "id": 1,
+        "name": "hossam",
+        "department": "general",
+        "academic_degree": "professor",
+        "is_permanent": true
+      },
+      "time_slot": {
+        "day": "WEDNESDAY",
+        "day_index": 3,
+        "start_time": "01:00",
+        "end_time": "03:00"
+      },
+      "student_count": 544,
+      "academic_list": "academics",
+      "academic_level": 3
+    }
+  ]
+}

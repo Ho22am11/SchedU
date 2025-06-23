@@ -15,21 +15,28 @@ use App\Models\Lecturer;
 use App\Models\Hall;
 use App\Models\Lab;
 use App\Models\Department;
+use App\Models\Schedule;
+use App\Models\Academic;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class ScheduleExportController extends Controller
 {
-    private function loadData($filterType = null, $filterId = null)
+    private function loadData($scheduleId = null, $filterType = null, $filterId = null)
     {
         $query = ScheduleEntry::with([
             'course',
             'lecturer.academicDegree',
             'hall',
             'lab',
-            'department'
+            'department',
+            'academic'
         ]);
     
+        if ($scheduleId) {
+            $query->where('schedule_id', $scheduleId);
+        }
+
         if ($filterType && $filterId) {
             switch ($filterType) {
                 case 'lecturer':
@@ -44,6 +51,12 @@ class ScheduleExportController extends Controller
                 case 'department':
                     $query->where('department_id', $filterId);
                     break;
+                case 'level':
+                    $query->where('academic_level', $filterId);
+                    break;
+                case 'program_list':
+                    $query->where('academic_id', $filterId);
+                    break;
             }
         }
     
@@ -57,12 +70,17 @@ class ScheduleExportController extends Controller
             $lecturerName = optional($entry->lecturer)->name;
             $degreePrefix = optional(optional($entry->lecturer)->academicDegree)->prefix ?? '';
             $departmentName = optional($entry->department)->name ?? '';
+            $academicName = optional($entry->academic)->name_ar ?? '';
 
             $staffName = $lecturerName ? $degreePrefix . ' ' . $lecturerName : '';
             
             $courseName = $entry->course->name_ar ?? $entry->course->name_en ?? '';
             
             $formattedData[] = [
+                'academic' => [
+                    'name_ar' => $academicName,
+                    'level' => $entry->academic_level
+                ],
                 'course' => [
                     'name' => $courseName,
                     'code' => $entry->course->code ?? '',
@@ -79,15 +97,17 @@ class ScheduleExportController extends Controller
                 'hall' => $entry->hall ? ['name' => $entry->hall->name] : null,
                 'room' => $entry->lab ? ['name' => $entry->lab->name] : null,
                 'department' => ['name' => $departmentName],
+                'group_number' => $entry->group_number ?? null,
+                'total_groups' => $entry->total_groups ?? null,
             ];
         }
     
         return $formattedData;
     }
 
-    private function buildTable($filterType = null, $filterId = null)
+    private function buildTable($scheduleId = null, $filterType = null, $filterId = null, $exportType = 'pdf')
     {
-        $sessions = $this->loadData($filterType, $filterId);
+        $sessions = $this->loadData($scheduleId, $filterType, $filterId);
         $daysMap = [
             'saturday' => 'السبت',
             'sunday' => 'الأحد',
@@ -99,7 +119,7 @@ class ScheduleExportController extends Controller
         ];
         
         $timeSlots = [];
-        for ($hour = 8; $hour <= 18; $hour += 2) {
+        for ($hour = 9; $hour <= 18; $hour += 2) {
             $start = str_pad($hour, 2, '0', STR_PAD_LEFT) . ':00';
             $end = str_pad($hour + 2, 2, '0', STR_PAD_LEFT) . ':00';
             $timeSlots[] = $start . '-' . $end;
@@ -125,6 +145,8 @@ class ScheduleExportController extends Controller
             $code = $s['course']['code'];
             $type = $s['session_type']; 
             $courseKey = $code; 
+            $academicLevel = $s['academic']['level'] ?? '';
+            $academicName = $s['academic']['name_ar'] ?? '';
         
             $teacher = $s['staff']['name'];
             
@@ -136,22 +158,62 @@ class ScheduleExportController extends Controller
             }
         
             $entryParts = [];
-            if (!empty($name)) {
-                $courseInfo = "<b>$name";
-                if (!empty($code)) {
-                    $courseInfo .= " ($code)";
+            if (!empty($academicName)){
+                $academicInfo = "";
+                if (!empty($academicLevel)) {
+                    $academicInfo .= "المستوى {$academicLevel} - ";
                 }
-                $courseInfo .= "</b>";
+                $academicInfo .= "{$academicName}";
+                
+                if ($exportType === 'pdf') {
+                    $academicInfo = "<div style='font-size:10px; font-weight:bold;'>{$academicInfo}</div>";
+                }
+                $entryParts[] = $academicInfo;
+            }
+            
+            if (!empty($name)) {
+                if ($exportType === 'pdf') {
+                    $courseInfo = "<div style='font-weight:bold; font-size:14px;'>{$name}";
+                    if (!empty($code)) {
+                        $courseInfo .= " <span style='font-weight:bold;font-size:12px;'>{$code}</span>";
+                    }
+                    $courseInfo .= "</div>";
+                } else {
+                    $courseInfo = $name;
+                    if (!empty($code)) {
+                        $courseInfo .= " ({$code})";
+                    }
+                }
                 $entryParts[] = $courseInfo;
             }
+            
             if (!empty($teacher)) {
-                $entryParts[] =  $teacher;
+                if ($exportType === 'pdf') {
+                    $teacher = "<div style='font-weight:bold;font-size:12px;'>{$teacher}</div>";
+                }
+                $entryParts[] = $teacher;
             }
+            
             if (!empty($room)) {
+                if ($exportType === 'pdf') {
+                    $room = "<div style='font-weight:bold;font-size:12px;'>{$room}</div>";
+                }
                 $entryParts[] = $room;
             }
             
-            $entry = implode('<br>', $entryParts);
+            if (isset($s['group_number']) && isset($s['total_groups'])) {
+                $group = "المجموعة {$s['group_number']} من {$s['total_groups']}";
+                if ($exportType === 'pdf') {
+                    $group = "<div style='font-size:12px;'>{$group}</div>";
+                }
+                $entryParts[] = $group;
+            }
+            
+            if ($exportType === 'pdf') {
+                $entry = implode('', $entryParts);
+            } else {
+                $entry = implode("\n", $entryParts);
+            }
         
             if (!empty($entry)) {
                 if (empty($table[$dayAr][$slot])) {
@@ -173,17 +235,19 @@ class ScheduleExportController extends Controller
         ];
     }
 
-    public function exportPdf($filterType = null, $filterId = null)
+    public function exportPdf($scheduleId = null, $filterType = null, $filterId = null)
     {
-        $data = $this->buildTable($filterType, $filterId);
+        $data = $this->buildTable($scheduleId, $filterType, $filterId, 'pdf');
         $table = $data['table'];
         $timeSlots = $data['timeSlots'];
         $days = $data['days'];
     
-        // تحديد العنوان بناءً على نوع التصفية
-        $title = 'جدول المحاضرات الأسبوعي'; // العنوان الافتراضي
+        $title = 'جدول المحاضرات الأسبوعي';
         
-        if ($filterType && $filterId) {
+        if ($scheduleId) {
+            $schedule = Schedule::find($scheduleId);
+            $title = $schedule ? $schedule->nameAr : 'الجدول ' . $scheduleId;
+        } elseif ($filterType && $filterId) {
             switch ($filterType) {
                 case 'lecturer':
                     $lecturer = Lecturer::findOrFail($filterId);
@@ -199,7 +263,14 @@ class ScheduleExportController extends Controller
                     break;
                 case 'department':
                     $department = Department::findOrFail($filterId);
-                    $title = 'قسم ' . $department->name_ar;
+                    $title = 'قسم ' . $department->nameAr;
+                    break;
+                case 'level':
+                    $title = "المستوى الدراسي: {$filterId}";
+                    break;
+                case 'program_list':
+                    $academic = Academic::find($filterId);
+                    $title = $academic ? "اللائحة: {$academic->name_ar}" : "اللائحة {$filterId}";
                     break;
             }
         }
@@ -211,12 +282,21 @@ class ScheduleExportController extends Controller
             .logo-left { float: right; }
             .logo-right { float: left; }
             .title { text-align: center; font-size: 22px; font-weight: bold; flex-grow: 1; }
-            table { border-collapse: collapse; width: 100%; margin-top: 40px; page-break-inside: avoid; }
+            .academic-year { 
+                text-align: center; 
+                font-size: 16px; 
+                font-weight: bold; 
+                margin-bottom: 10px;
+                color: #333;
+                border-bottom: 1px solid #ccc;
+                padding-bottom: 5px;
+            }
+            table { border-collapse: collapse; width: 100%; margin-top: 20px; page-break-inside: avoid; }
             th, td { border: 1px solid #333; padding: 10px; text-align: center; vertical-align: top; }
             th { background-color: #f2f2f2; font-weight: bold; }
             .time-header { background-color: #e0e0e0; }
             .day-header { background-color: #d0d0d0; }
-            .course-cell { min-height: 80px; }
+            .course-cell { min-height: 90px; display: flex; flex-direction: column; justify-content: center; }
         </style>
         ';
     
@@ -238,12 +318,10 @@ class ScheduleExportController extends Controller
             <div class="logo-right">
                 <img src="data:image/png;base64,' . $base64Logo1 . '" style="height: 80px;">
             </div>
-            
-            <div class="title">' . $title . '</div>
-            
-            <div class="logo-left">
-                <img src="data:image/png;base64,' . $base64Logo2 . '" style="height: 80px;">
+                    <div class="academic-year">
+                للعام الجامعي 2025/2026 - الفصل الدراسي الأول
             </div>
+            <div class="title">' . $title . '</div>
         </div>
         <div style="clear: both;"></div>';
     
@@ -254,7 +332,21 @@ class ScheduleExportController extends Controller
         $html .= '</tr></thead><tbody>';
     
         $colorMap = [];
-        $colors = ['#e3f2fd', '#f1f8e9', '#ffecb3', '#fce4ec', '#e8f5e9', '#fff3e0', '#e0f7fa'];
+       // استبدال مصفوفة الألوان القديمة بهذه الألوان الزاهية
+       $colors = [
+        '#FF6B6B', // أحمر فاتح ناعم
+        '#4ECDC4', // تركواز فاتح
+        '#45B7D1', // أزرق سماوي
+        '#FFA07A', // سلمون فاتح
+        '#98D8C8', // أخضر مائي فاتح
+        '#D4A5A5', // وردي ترابي
+        '#B5EAD7', // أخضر نعناعي
+        '#FFDAC1', // خوخي فاتح
+        '#E2F0CB', // أخضر مصفر خفيف
+        '#C7CEEA', // أزرق بنفسجي فاتح
+        '#F8B195', // برتقالي وردي
+        '#A8E6CF'  // أخضر مائي فاتح
+    ];
         $colorIndex = 0;
     
         foreach ($days as $day) {
@@ -297,7 +389,9 @@ class ScheduleExportController extends Controller
         $mpdf->WriteHTML($html);
     
         $filename = 'schedule';
-        if ($filterType && $filterId) {
+        if ($scheduleId) {
+            $filename .= '_schedule_' . $scheduleId;
+        } elseif ($filterType && $filterId) {
             $filename .= '_' . $filterType . '_' . $filterId;
         }
         $filename .= '.pdf';
@@ -306,9 +400,10 @@ class ScheduleExportController extends Controller
             ->header('Content-Type', 'application/pdf')
             ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
     }
-    public function exportExcel($filterType = null, $filterId = null)
+    
+    public function exportExcel($scheduleId = null, $filterType = null, $filterId = null)
     {
-        $data = $this->buildTable($filterType, $filterId);
+        $data = $this->buildTable($scheduleId, $filterType, $filterId, 'excel');
         $table = $data['table'];
         $timeSlots = $data['timeSlots'];
         $days = $data['days'];
@@ -317,10 +412,12 @@ class ScheduleExportController extends Controller
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setRightToLeft(true);
     
-        // تحديد العنوان بناءً على نوع التصفية
-        $title = 'جدول المحاضرات الأسبوعي'; // العنوان الافتراضي
+        $title = 'جدول المحاضرات الأسبوعي';
         
-        if ($filterType && $filterId) {
+        if ($scheduleId) {
+            $schedule = Schedule::find($scheduleId);
+            $title = $schedule ? $schedule->nameAr : 'الجدول ' . $scheduleId;
+        } elseif ($filterType && $filterId) {
             switch ($filterType) {
                 case 'lecturer':
                     $lecturer = Lecturer::findOrFail($filterId);
@@ -337,6 +434,13 @@ class ScheduleExportController extends Controller
                 case 'department':
                     $department = Department::findOrFail($filterId);
                     $title = 'قسم ' . $department->name_ar;
+                    break;
+                case 'level':
+                    $title = "المستوى الدراسي: {$filterId}";
+                    break;
+                case 'program_list':
+                    $academic = Academic::find($filterId);
+                    $title = $academic ? "اللائحة: {$academic->name_ar}" : "اللائحة {$filterId}";
                     break;
             }
         }
@@ -368,8 +472,20 @@ class ScheduleExportController extends Controller
         }
     
         $colorMap = [];
-        $colors = ['e3f2fd', 'f1f8e9', 'ffecb3', 'fce4ec', 'e8f5e9', 'fff3e0', 'e0f7fa'];
-        $colorIndex = 0;
+        $colors = [
+            '#FF6B6B', // أحمر فاتح ناعم
+            '#4ECDC4', // تركواز فاتح
+            '#45B7D1', // أزرق سماوي
+            '#FFA07A', // سلمون فاتح
+            '#98D8C8', // أخضر مائي فاتح
+            '#D4A5A5', // وردي ترابي
+            '#B5EAD7', // أخضر نعناعي
+            '#FFDAC1', // خوخي فاتح
+            '#E2F0CB', // أخضر مصفر خفيف
+            '#C7CEEA', // أزرق بنفسجي فاتح
+            '#F8B195', // برتقالي وردي
+            '#A8E6CF'  // أخضر مائي فاتح
+        ];        $colorIndex = 0;
     
         $rowIndex = 3;
         foreach ($days as $day) {
@@ -385,7 +501,7 @@ class ScheduleExportController extends Controller
                 $entry = $table[$day][$slot] ?? '';
                 if (!empty($entry)) {
                     $courseKey = $entry['course_key'] ?? '';
-                    $cellContent = implode("\n", $entry['html']);
+                    $cellContent = implode("\n\n", $entry['html']);
                     $cell = $col . $rowIndex;
     
                     $sheet->setCellValue($cell, $cellContent);
@@ -431,7 +547,9 @@ class ScheduleExportController extends Controller
         }
     
         $filename = 'schedule';
-        if ($filterType && $filterId) {
+        if ($scheduleId) {
+            $filename .= '_schedule_' . $scheduleId;
+        } elseif ($filterType && $filterId) {
             $filename .= '_' . $filterType . '_' . $filterId;
         }
         $filename .= '.xlsx';
@@ -443,43 +561,73 @@ class ScheduleExportController extends Controller
         return response()->download($tempPath, $filename)->deleteFileAfterSend(true);
     }
 
+    public function exportPdfSchedule($id)
+    {
+        return $this->exportPdf($id);
+    }
+
+    public function exportExcelSchedule($id)
+    {
+        return $this->exportExcel($id);
+    }
+
+    public function exportPdfLevel($level)
+    {
+        return $this->exportPdf(null, 'level', $level);
+    }
+
+    public function exportExcelLevel($level)
+    {
+        return $this->exportExcel(null, 'level', $level);
+    }
+
+    public function exportPdfProgram($id)
+    {
+        return $this->exportPdf(null, 'program_list', $id);
+    }
+
+    public function exportExcelProgram($id)
+    {
+        return $this->exportExcel(null, 'program_list', $id);
+    }
+
     public function exportPdfLecturer($id)
     {
-        return $this->exportPdf('lecturer', $id);
+        return $this->exportPdf(null, 'lecturer', $id);
     }
 
     public function exportExcelLecturer($id)
     {
-        return $this->exportExcel('lecturer', $id);
+        return $this->exportExcel(null, 'lecturer', $id);
     }
 
     public function exportPdfHall($id)
     {
-        return $this->exportPdf('hall', $id);
+        return $this->exportPdf(null, 'hall', $id);
     }
 
     public function exportExcelHall($id)
     {
-        return $this->exportExcel('hall', $id);
+        return $this->exportExcel(null, 'hall', $id);
     }
 
     public function exportPdfLab($id)
     {
-        return $this->exportPdf('lab', $id);
+        return $this->exportPdf(null, 'lab', $id);
     }
 
     public function exportExcelLab($id)
     {
-        return $this->exportExcel('lab', $id);
+        return $this->exportExcel(null, 'lab', $id);
     }
 
     public function exportPdfDepartment($id)
     {
-        return $this->exportPdf('department', $id);
+        return $this->exportPdf(null, 'department', $id);
     }
 
     public function exportExcelDepartment($id)
     {
-        return $this->exportExcel('department', $id);
+        return $this->exportExcel(null, 'department', $id);
     }
 }

@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
-    // ✅ تسجيل الدخول
     public function login(Request $request)
     {
         $request->validate([

@@ -29,6 +29,7 @@ class ScriptController extends Controller
                 'path'    => $python,
             ], 500);
         }
+        
         if (!File::exists($script)) {
             return response()->json([
                 'message' => 'Script main.py not found at:',
@@ -64,7 +65,7 @@ class ScriptController extends Controller
                       ? file_get_contents(base_path('scheduler_debug_full.log'))
                       : '(no log file)';
 
-            // حالة “لا يوجد جدول صالح”
+            // حالة "لا يوجد جدول صالح"
             if ($code === 1 && str_contains($stdout, 'Could not find a valid schedule')) {
                 return response()->json([
                     'message' => 'No valid schedule could be generated for the given plan.',
