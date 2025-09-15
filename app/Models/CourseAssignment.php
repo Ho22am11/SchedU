@@ -9,8 +9,8 @@ class CourseAssignment extends Model
 {
     use HasFactory;
 
-    protected $guarded=['id'];
-    public $timestamps = false ;
+    protected $guarded = ['id'];
+    public $timestamps = false;
 
 
     public function lecturerAssignments()
@@ -27,5 +27,20 @@ class CourseAssignment extends Model
     {
         return $this->belongsTo(Course::class);
     }
-   
+
+    public function studyPlan()
+    {
+        return $this->belongsTo(StudyPlane::class, 'study_plan_id');
+    }
+
+    // Common course relationships
+    public function commonStudyPlan()
+    {
+        return $this->belongsTo(StudyPlane::class, 'common_study_plan_id');
+    }
+
+    public function commonCourse()
+    {
+        return $this->belongsTo(CourseAssignment::class, 'common_course_id');
+    }
 }
