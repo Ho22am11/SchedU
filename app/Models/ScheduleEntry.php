@@ -9,34 +9,58 @@ class ScheduleEntry extends Model
 {
     use HasFactory;
 
-    protected $guarded=['id'];
+    protected $guarded = ['id'];
 
-     public function course(){
-        return $this->belongsTo(Course::class);
-    }
+    protected $casts = [
+        'course_ids' => 'array',
+        'academic_ids' => 'array',
+        'academic_levels' => 'array',
+        'department_ids' => 'array',
+    ];
 
-     public function hall(){
+    public function hall()
+    {
         return $this->belongsTo(Hall::class);
     }
 
-    public function lap(){
+    public function lap()
+    {
         return $this->belongsTo(Lap::class);
     }
 
-    public function lab(){
+    public function lab()
+    {
         return $this->belongsTo(Lap::class);
     }
 
-    public function Lecturer(){
+    public function Lecturer()
+    {
         return $this->belongsTo(Lecturer::class);
     }
 
-    public function academic(){
-        return $this->belongsTo(Academic::class);
+    // Accessor methods instead of relationships for multiple IDs
+    public function getCoursesAttribute()
+    {
+        if (!$this->course_ids || !is_array($this->course_ids)) {
+            return collect();
+        }
+        return Course::whereIn('id', $this->course_ids)->get();
     }
 
-     public function department(){
-        return $this->belongsTo(Department::class);
+    public function getAcademicsAttribute()
+    {
+        if (!$this->academic_ids || !is_array($this->academic_ids)) {
+            return collect();
+        }
+        return Academic::whereIn('id', $this->academic_ids)->get();
     }
-   
+
+    public function getDepartmentsAttribute()
+    {
+        if (!$this->department_ids || !is_array($this->department_ids)) {
+            return collect();
+        }
+        return Department::whereIn('id', $this->department_ids)->get();
+    }
+
 }
