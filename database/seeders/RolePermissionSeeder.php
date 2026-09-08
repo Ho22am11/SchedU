@@ -60,6 +60,7 @@ class RolePermissionSeeder extends Seeder
             'remove role',
             'assign permission',
             'remove permission',
+            'manage schedule settings',
         ];
 
         foreach ($permissions as $permission) {

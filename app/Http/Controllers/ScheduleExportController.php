@@ -1,21 +1,21 @@
 <?php
+
 namespace App\Http\Controllers;
 
-use Illuminate\Support\Facades\Storage;
-use Mpdf\Mpdf;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
+use App\Http\Requests\ExportFullScheduleRequest;
+use App\Models\Academic;
+use App\Models\Department;
+use App\Models\Hall;
+use App\Models\Lecturer;
 use App\Models\Schedule;
 use App\Models\ScheduleEntry;
-use App\Models\Lecturer;
-use App\Models\Hall;
-use App\Models\Lap;
-use App\Models\Department;
-use App\Models\Academic;
-use Carbon\Carbon;
+use App\Services\ScheduleWorkbookExporter;
 use Illuminate\Http\Request;
+use Mpdf\Mpdf;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ScheduleExportController extends Controller
 {
@@ -27,7 +27,7 @@ class ScheduleExportController extends Controller
                 $query->select('id', 'prefix', 'prefix_ar');
             },
             'lecturer' => function ($query) {
-                $query->select('id', 'name', "name_ar", 'department_id', 'academic_id');
+                $query->select('id', 'name', 'name_ar', 'department_id', 'academic_id');
             },
             'hall' => function ($query) {
                 $query->select('id', 'name');
@@ -42,7 +42,12 @@ class ScheduleExportController extends Controller
                 'course_ids',
                 'lecturer_id',
                 'hall_id',
+                'hall_name',
                 'lap_id',
+                'lap_name',
+                'lecturer_name',
+                'lecturer_name_ar',
+                'session_type',
                 'department_ids',
                 'academic_ids',
                 'academic_levels',
@@ -54,39 +59,82 @@ class ScheduleExportController extends Controller
             );
 
         // تطبيق الفلاتر
-        if (!empty($filters['staff_id'])) {
+        if (! empty($filters['staff_id'])) {
             $query->where('lecturer_id', $filters['staff_id']);
         }
-        if (!empty($filters['hall_id'])) {
+        if (! empty($filters['hall_id'])) {
             $query->where('hall_id', $filters['hall_id']);
         }
-        if (!empty($filters['lab_id'])) {
+        if (! empty($filters['lab_id'])) {
             $query->where('lap_id', $filters['lab_id']);
         }
-        if (!empty($filters['academic_list_id'])) {
+        if (! empty($filters['academic_list_id'])) {
             $query->whereJsonContains('academic_ids', $filters['academic_list_id']);
         }
-        if (!empty($filters['academic_level'])) {
+        if (! empty($filters['academic_level'])) {
             $query->whereJsonContains('academic_levels', $filters['academic_level']);
         }
-        if (!empty($filters['department_id'])) {
+        if (! empty($filters['department_id'])) {
             $query->whereJsonContains('department_ids', $filters['department_id']);
         }
 
-        return $query->get()->toArray();
+        $rows = $query->get()->toArray();
+
+        // Point-in-time snapshots override the live names; the live relations
+        // stay as the fallback for entries created before snapshots existed.
+        foreach ($rows as &$row) {
+            if ($row['hall_name'] !== null) {
+                $row['hall'] = ['id' => $row['hall_id'], 'name' => $row['hall_name']];
+            }
+            if ($row['lap_name'] !== null) {
+                $row['lap'] = ['id' => $row['lap_id'], 'name' => $row['lap_name']];
+            }
+            $row['lecturer'] = $row['lecturer'] ?? [];
+            $row['lecturer']['name'] = $row['lecturer_name'] ?? $row['lecturer']['name'] ?? null;
+            $row['lecturer']['name_ar'] = $row['lecturer_name_ar'] ?? $row['lecturer']['name_ar'] ?? null;
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    /**
+     * Rooms actually referenced by this schedule's entries — snapshot names
+     * first, so per-room sheets survive room renames and deletions. Sorted
+     * for stable sheet order.
+     *
+     * @return array<int, array{id: int, name: string}>
+     */
+    private function referencedRooms(array $entries, string $idColumn, string $snapshotColumn, string $relation): array
+    {
+        $rooms = [];
+        foreach ($entries as $entry) {
+            $id = $entry[$idColumn] ?? null;
+            $name = $entry[$snapshotColumn] ?? $entry[$relation]['name'] ?? null;
+            if ($id === null || $name === null) {
+                continue;
+            }
+            $rooms[$id] = ['id' => (int) $id, 'name' => $name];
+        }
+
+        usort($rooms, fn (array $a, array $b): bool => strcasecmp($a['name'], $b['name']));
+
+        return array_values($rooms);
     }
 
     // Remove duplicates from academic list, departments, levels, etc..
     private function getUniqueJoined($array, $key = null, $separator = ' / ')
     {
-        if (empty($array))
+        if (empty($array)) {
             return '';
+        }
 
         $values = $key ? array_map(function ($item) use ($key) {
             return $item[$key] ?? '';
         }, $array) : $array;
 
         $uniqueValues = array_unique(array_filter($values));
+
         return implode($separator, $uniqueValues);
     }
 
@@ -131,7 +179,7 @@ class ScheduleExportController extends Controller
                 }
             }
 
-            if (!$tooClose) {
+            if (! $tooClose) {
                 break;
             }
 
@@ -141,6 +189,7 @@ class ScheduleExportController extends Controller
 
         $color = "hsl({$finalHue}, 70%, 88%)";
         $colorMap[$code] = $color;
+
         return $color;
     }
 
@@ -157,16 +206,22 @@ class ScheduleExportController extends Controller
                 $r = $g = $b = $l;
             } else {
                 $hue2rgb = function ($p, $q, $t) {
-                    if ($t < 0)
+                    if ($t < 0) {
                         $t += 1;
-                    if ($t > 1)
+                    }
+                    if ($t > 1) {
                         $t -= 1;
-                    if ($t < 1 / 6)
+                    }
+                    if ($t < 1 / 6) {
                         return $p + ($q - $p) * 6 * $t;
-                    if ($t < 1 / 2)
+                    }
+                    if ($t < 1 / 2) {
                         return $q;
-                    if ($t < 2 / 3)
+                    }
+                    if ($t < 2 / 3) {
                         return $p + ($q - $p) * (2 / 3 - $t) * 6;
+                    }
+
                     return $p;
                 };
 
@@ -178,13 +233,14 @@ class ScheduleExportController extends Controller
             }
 
             $hex = sprintf('%02X%02X%02X', round($r * 255), round($g * 255), round($b * 255));
-            return $includeHash ? '#' . $hex : $hex;
+
+            return $includeHash ? '#'.$hex : $hex;
         }
 
         return $includeHash ? '#FFFFFF' : 'FFFFFF'; // Default white
     }
 
-    // Generate descriptive file names 
+    // Generate descriptive file names
     private function generateFileName($scheduleId, $filters, $extension)
     {
         // Get schedule name
@@ -200,63 +256,63 @@ class ScheduleExportController extends Controller
         $filterParts = [];
 
         // Staff filter
-        if (!empty($filters['staff_id'])) {
+        if (! empty($filters['staff_id'])) {
             $staff = \App\Models\Lecturer::with('academicDegree')->find($filters['staff_id']);
             if ($staff) {
                 $prefix = '';
                 if ($staff->academicDegree) {
-                    $prefix = ($staff->academicDegree->prefix ?? '') . '_';
+                    $prefix = ($staff->academicDegree->prefix ?? '').'_';
                 }
-                $staffName = $this->cleanForFilename($prefix . ($staff->name ?? 'staff'));
-                $filterParts[] = "staff_" . $staffName;
+                $staffName = $this->cleanForFilename($prefix.($staff->name ?? 'staff'));
+                $filterParts[] = 'staff_'.$staffName;
             }
         }
 
         // Hall filter
-        if (!empty($filters['hall_id'])) {
+        if (! empty($filters['hall_id'])) {
             $hall = \App\Models\Hall::find($filters['hall_id']);
             if ($hall) {
-                $filterParts[] = "hall_" . $this->cleanForFilename($hall->name);
+                $filterParts[] = 'hall_'.$this->cleanForFilename($hall->name);
             }
         }
 
-        // Lab filter  
-        if (!empty($filters['lab_id'])) {
+        // Lab filter
+        if (! empty($filters['lab_id'])) {
             $lab = \App\Models\Lap::find($filters['lab_id']);
             if ($lab) {
-                $filterParts[] = "lab_" . $this->cleanForFilename($lab->name);
+                $filterParts[] = 'lab_'.$this->cleanForFilename($lab->name);
             }
         }
 
         // Academic list filter
-        if (!empty($filters['academic_list_id'])) {
+        if (! empty($filters['academic_list_id'])) {
             $academic = \App\Models\Academic::find($filters['academic_list_id']);
             if ($academic) {
-                $filterParts[] = "academic_" . $this->cleanForFilename($academic->name ?? 'academic');
+                $filterParts[] = 'academic_'.$this->cleanForFilename($academic->name ?? 'academic');
             }
         }
 
         // Academic level filter
-        if (!empty($filters['academic_level'])) {
-            $filterParts[] = "level_" . $filters['academic_level'];
+        if (! empty($filters['academic_level'])) {
+            $filterParts[] = 'level_'.$filters['academic_level'];
         }
 
         // Department filter
-        if (!empty($filters['department_id'])) {
+        if (! empty($filters['department_id'])) {
             $department = \App\Models\Department::find($filters['department_id']);
             if ($department) {
-                $filterParts[] = "dept_" . $this->cleanForFilename($department->name ?? 'department');
+                $filterParts[] = 'dept_'.$this->cleanForFilename($department->name ?? 'department');
             }
         }
 
         // Add filters to filename if any exist
-        if (!empty($filterParts)) {
+        if (! empty($filterParts)) {
             $filenameParts[] = implode('_', $filterParts);
         }
 
         // Add timestamp and extension
         $timestamp = date('Y-m-d_H-i-s');
-        $filename = implode('_', $filenameParts) . '_' . $timestamp . '.' . $extension;
+        $filename = implode('_', $filenameParts).'_'.$timestamp.'.'.$extension;
 
         return $filename;
     }
@@ -271,6 +327,7 @@ class ScheduleExportController extends Controller
         $string = preg_replace('/_+/', '_', $string);
         // Remove leading/trailing underscores
         $string = trim($string, '_');
+
         // Limit length
         return substr($string, 0, 50);
     }
@@ -281,56 +338,56 @@ class ScheduleExportController extends Controller
         $filterParts = [];
 
         // Staff filter
-        if (!empty($filters['staff_id'])) {
+        if (! empty($filters['staff_id'])) {
             $staff = \App\Models\Lecturer::with('academicDegree')->find($filters['staff_id']);
             if ($staff) {
                 $prefix = '';
                 if ($staff->academicDegree) {
-                    $prefix = ($staff->academicDegree->prefix_ar ?? $staff->academicDegree->prefix ?? '') . ' ';
+                    $prefix = ($staff->academicDegree->prefix_ar ?? $staff->academicDegree->prefix ?? '').' ';
                 }
-                $staffName = $prefix . ($staff->name_ar ?? $staff->name);
-                $filterParts[] = "العضو: " . trim($staffName);
+                $staffName = $prefix.($staff->name_ar ?? $staff->name);
+                $filterParts[] = 'العضو: '.trim($staffName);
             }
         }
 
         // Hall filter
-        if (!empty($filters['hall_id'])) {
+        if (! empty($filters['hall_id'])) {
             $hall = \App\Models\Hall::find($filters['hall_id']);
             if ($hall) {
-                $filterParts[] = "القاعة: " . $hall->name;
+                $filterParts[] = 'القاعة: '.$hall->name;
             }
         }
 
-        // Lab filter  
-        if (!empty($filters['lab_id'])) {
+        // Lab filter
+        if (! empty($filters['lab_id'])) {
             $lab = \App\Models\Lap::find($filters['lab_id']);
             if ($lab) {
-                $filterParts[] = "المعمل: " . $lab->name;
+                $filterParts[] = 'المعمل: '.$lab->name;
             }
         }
 
         // Academic list filter
-        if (!empty($filters['academic_list_id'])) {
+        if (! empty($filters['academic_list_id'])) {
             $academic = \App\Models\Academic::find($filters['academic_list_id']);
             if ($academic) {
-                $filterParts[] = "القائمة الأكاديمية: " . ($academic->name_ar ?? $academic->name);
+                $filterParts[] = 'القائمة الأكاديمية: '.($academic->name_ar ?? $academic->name);
             }
         }
 
         // Academic level filter
-        if (!empty($filters['academic_level'])) {
-            $filterParts[] = "المستوى: " . $filters['academic_level'];
+        if (! empty($filters['academic_level'])) {
+            $filterParts[] = 'المستوى: '.$filters['academic_level'];
         }
 
         // Department filter
-        if (!empty($filters['department_id'])) {
+        if (! empty($filters['department_id'])) {
             $department = \App\Models\Department::find($filters['department_id']);
             if ($department) {
-                $filterParts[] = "القسم: " . ($department->name_ar ?? $department->name);
+                $filterParts[] = 'القسم: '.($department->name_ar ?? $department->name);
             }
         }
 
-        return empty($filterParts) ? "" : implode(" - ", $filterParts);
+        return empty($filterParts) ? '' : implode(' - ', $filterParts);
     }
 
     // Calculate the data needed for the metadata sub table
@@ -342,22 +399,22 @@ class ScheduleExportController extends Controller
 
         foreach ($entries as $entry) {
             // Count unique courses
-            if (!empty($entry['course_ids']) && is_array($entry['course_ids'])) {
+            if (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
                 foreach ($entry['course_ids'] as $courseId) {
                     $uniqueCourses[$courseId] = true;
                 }
             }
 
             // Count unique rooms (halls and labs)
-            if (!empty($entry['hall']['id'])) {
-                $uniqueRooms['hall_' . $entry['hall']['id']] = true;
+            if (! empty($entry['hall']['id'])) {
+                $uniqueRooms['hall_'.$entry['hall']['id']] = true;
             }
-            if (!empty($entry['lap']['id'])) {
-                $uniqueRooms['lab_' . $entry['lap']['id']] = true;
+            if (! empty($entry['lap']['id'])) {
+                $uniqueRooms['lab_'.$entry['lap']['id']] = true;
             }
 
             // Count unique staff
-            if (!empty($entry['lecturer']['id'])) {
+            if (! empty($entry['lecturer']['id'])) {
                 $uniqueStaff[$entry['lecturer']['id']] = true;
             }
         }
@@ -366,12 +423,12 @@ class ScheduleExportController extends Controller
             'total_sessions' => count($entries),
             'total_courses' => count($uniqueCourses),
             'total_rooms' => count($uniqueRooms),
-            'total_staff' => count($uniqueStaff)
+            'total_staff' => count($uniqueStaff),
         ];
     }
 
     // دالة لبناء الجدول من البيانات
-    private function buildTable($entries, $exportType = 'pdf')
+    private function buildTable($entries, $exportType = 'pdf', ?array $reservedPeriod = null)
     {
         $daysMap = [
             'saturday' => 'السبت',
@@ -380,14 +437,15 @@ class ScheduleExportController extends Controller
             'tuesday' => 'الثلاثاء',
             'wednesday' => 'الأربعاء',
             'thursday' => 'الخميس',
-            'friday' => 'الجمعة'
+            'friday' => 'الجمعة',
         ];
 
         // إنشاء time slots مسبقا
         $timeSlots = array_map(function ($hour) {
-            $start = str_pad($hour, 2, '0', STR_PAD_LEFT) . ':00';
-            $end = str_pad($hour + 2, 2, '0', STR_PAD_LEFT) . ':00';
-            return $start . '-' . $end;
+            $start = str_pad($hour, 2, '0', STR_PAD_LEFT).':00';
+            $end = str_pad($hour + 2, 2, '0', STR_PAD_LEFT).':00';
+
+            return $start.'-'.$end;
         }, range(9, 18, 2));
 
         // تهيئة الجدول باستخدام array_fill
@@ -398,18 +456,19 @@ class ScheduleExportController extends Controller
 
         foreach ($entries as $entry) {
             $dayAr = $daysMap[strtolower($entry['Day'])] ?? '';
-            if (empty($dayAr))
+            if (empty($dayAr)) {
                 continue;
+            }
 
-            $slot = ($entry['startTime'] ? substr($entry['startTime'], 0, 5) : '') . '-' .
+            $slot = ($entry['startTime'] ? substr($entry['startTime'], 0, 5) : '').'-'.
                 ($entry['endTime'] ? substr($entry['endTime'], 0, 5) : '');
 
             // تجميع بيانات الخلية
             $entryContent = $this->buildCellContent($entry, $exportType);
 
-            if (!empty($entryContent)) {
+            if (! empty($entryContent)) {
                 $courseKey = '';
-                if (!empty($entry['course_ids']) && is_array($entry['course_ids'])) {
+                if (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
                     $courseModels = \App\Models\Course::whereIn('id', $entry['course_ids'])->get();
                     $courseKey = $courseModels->pluck('code')->implode('-');
                 }
@@ -417,7 +476,7 @@ class ScheduleExportController extends Controller
                 if (empty($table[$dayAr][$slot])) {
                     $table[$dayAr][$slot] = [
                         'html' => [$entryContent],
-                        'course_key' => $courseKey
+                        'course_key' => $courseKey,
                     ];
                 } else {
                     // التعديل هنا: استبدال الخط بكلمة "أو"
@@ -427,15 +486,33 @@ class ScheduleExportController extends Controller
                         $separator = "\n────────────\n";
                     }
 
-                    $table[$dayAr][$slot]['html'][] = $separator . $entryContent;
+                    $table[$dayAr][$slot]['html'][] = $separator.$entryContent;
                 }
             }
+        }
+
+        if ($reservedPeriod === null) {
+            return [
+                'table' => $table,
+                'timeSlots' => $timeSlots,
+                'days' => array_values($daysMap),
+            ];
+        }
+
+        $reservedDay = $daysMap[$reservedPeriod['day']] ?? null;
+        $reservedSlot = $reservedPeriod['start_time'].'-'.$reservedPeriod['end_time'];
+
+        if ($reservedDay && isset($table[$reservedDay][$reservedSlot])) {
+            $table[$reservedDay][$reservedSlot] = [
+                'html' => [$reservedPeriod['label_ar']],
+                'is_reserved' => true,
+            ];
         }
 
         return [
             'table' => $table,
             'timeSlots' => $timeSlots,
-            'days' => array_values($daysMap)
+            'days' => array_values($daysMap),
         ];
     }
 
@@ -451,7 +528,7 @@ class ScheduleExportController extends Controller
         $uniqueCourseNames = '';
         $uniqueCourseCodes = '';
 
-        if (!empty($entry['course_ids']) && is_array($entry['course_ids'])) {
+        if (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
             $courseModels = \App\Models\Course::whereIn('id', $entry['course_ids'])->get();
             $uniqueCourseNames = $this->getUniqueJoined($courseModels->toArray(), 'name_ar');
             $uniqueCourseCodes = $this->getUniqueJoined($courseModels->toArray(), 'code');
@@ -466,7 +543,7 @@ class ScheduleExportController extends Controller
         }
 
         // 2. Academic levels (second line)
-        if (!empty($entry['academic_levels']) && is_array($entry['academic_levels'])) {
+        if (! empty($entry['academic_levels']) && is_array($entry['academic_levels'])) {
             $uniqueLevels = $this->getUniqueJoined($entry['academic_levels'], null, ' - ');
             if ($uniqueLevels) {
                 $levelInfo = "المستوى {$uniqueLevels}";
@@ -478,7 +555,7 @@ class ScheduleExportController extends Controller
         }
 
         // 3. Academic lists (third line)
-        if (!empty($entry['academic_ids']) && is_array($entry['academic_ids'])) {
+        if (! empty($entry['academic_ids']) && is_array($entry['academic_ids'])) {
             $academicModels = \App\Models\Academic::whereIn('id', $entry['academic_ids'])->get();
             $uniqueAcademics = $this->getUniqueJoined($academicModels->toArray(), 'name_ar');
             if ($uniqueAcademics) {
@@ -494,13 +571,13 @@ class ScheduleExportController extends Controller
         $hallName = $esc($entry['hall']['name'] ?? '');
         $lapName = $esc($entry['lap']['name'] ?? '');
         $room = '';
-        if (!empty($hallName)) {
-            $room = 'قاعة: ' . $hallName;
-        } elseif (!empty($lapName)) {
-            $room = 'معمل: ' . $lapName;
+        if (! empty($hallName)) {
+            $room = 'قاعة: '.$hallName;
+        } elseif (! empty($lapName)) {
+            $room = 'معمل: '.$lapName;
         }
 
-        if (!empty($room)) {
+        if (! empty($room)) {
             $roomDisplay = $exportType === 'pdf'
                 ? "<div style='font-weight:bold;font-size:12px;'>{$room}</div>"
                 : $room;
@@ -517,11 +594,11 @@ class ScheduleExportController extends Controller
         }
 
         // 6. Staff name with degree prefix (sixth line)
-        $degreePrefix = $esc($entry['lecturer']['academic_degree']["prefix_ar"] ?? $entry['lecturer']['academic_degree']['prefix'] ?? '');
+        $degreePrefix = $esc($entry['lecturer']['academic_degree']['prefix_ar'] ?? $entry['lecturer']['academic_degree']['prefix'] ?? '');
         $lecturerName = $esc($entry['lecturer']['name_ar'] ?? $entry['lecturer']['name'] ?? '');
-        $staffName = trim($degreePrefix . ' ' . $lecturerName);
+        $staffName = trim($degreePrefix.' '.$lecturerName);
 
-        if (!empty($staffName)) {
+        if (! empty($staffName)) {
             $staffDisplay = $exportType === 'pdf'
                 ? "<div style='font-weight:bold;font-size:12px;'>{$staffName}</div>"
                 : "{$staffName}";
@@ -548,18 +625,22 @@ class ScheduleExportController extends Controller
             'lab_id',
             'academic_list_id',
             'academic_level',
-            'department_id'
+            'department_id',
         ]);
 
         $entries = $this->loadFilteredData($scheduleId, $filters);
-        $data = $this->buildTable($entries, 'pdf');
+        $reservedPeriod = Schedule::findOrFail($scheduleId)->reservedPeriod();
+        $data = $this->buildTable(
+            $entries,
+            'pdf',
+            $reservedPeriod
+        );
 
         // Build filter string
         $filterString = $this->buildFilterHeaderString($filters);
 
-
         $schedule = Schedule::select('nameAr')->find($scheduleId);
-        $title = $schedule ? $schedule->nameAr : 'الجدول ' . $scheduleId;
+        $title = $schedule ? $schedule->nameAr : 'الجدول '.$scheduleId;
 
         $mpdf = new Mpdf([
             'mode' => 'utf-8',
@@ -570,21 +651,29 @@ class ScheduleExportController extends Controller
             'margin_right' => 10,
             'default_font' => 'dejavusans',
             'autoScriptToLang' => true,
-            'autoLangToFont' => true
+            'autoLangToFont' => true,
         ]);
 
         $mpdf->SetAutoPageBreak(true, 15);
-        $mpdf->WriteHTML($this->generatePdfHtml($title, $data['table'], $data['timeSlots'], $data['days'], $filterString, $entries));
+        $mpdf->WriteHTML($this->generatePdfHtml(
+            $title,
+            $data['table'],
+            $data['timeSlots'],
+            $data['days'],
+            $filterString,
+            $entries,
+            $this->signatureTitlesFor(! empty($filters['staff_id']))
+        ));
 
         $filename = $this->generateFileName($scheduleId, $filters, 'pdf');
 
         return response($mpdf->Output('', 'S'))
             ->header('Content-Type', 'application/pdf')
-            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            ->header('Content-Disposition', 'attachment; filename="'.$filename.'"');
     }
 
     // تصدير Excel مع الفلاتر
-    public function exportExcelWithFilters(Request $request)
+    public function exportExcelWithFilters(Request $request, ScheduleWorkbookExporter $workbookExporter)
     {
         set_time_limit(300);
 
@@ -599,18 +688,23 @@ class ScheduleExportController extends Controller
             'lab_id',
             'academic_list_id',
             'academic_level',
-            'department_id'
+            'department_id',
         ]);
 
         $entries = $this->loadFilteredData($scheduleId, $filters);
-        $data = $this->buildTable($entries, 'excel');
+        $reservedPeriod = Schedule::findOrFail($scheduleId)->reservedPeriod();
+        $data = $this->buildTable(
+            $entries,
+            'excel',
+            $reservedPeriod
+        );
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setRightToLeft(true);
 
         $schedule = Schedule::select('nameAr')->find($scheduleId);
-        $title = $schedule ? $schedule->nameAr : 'الجدول ' . $scheduleId;
+        $title = $schedule ? $schedule->nameAr : 'الجدول '.$scheduleId;
 
         // Build filter string
         $filterString = $this->buildFilterHeaderString($filters);
@@ -619,42 +713,42 @@ class ScheduleExportController extends Controller
         $lastCol = chr(65 + $colCount - 1);
 
         // Main title
-        $sheet->mergeCells('A1:' . $lastCol . '1');
+        $sheet->mergeCells('A1:'.$lastCol.'1');
         $sheet->setCellValue('A1', $title);
         $sheet->getStyle('A1')->applyFromArray([
             'font' => ['bold' => true, 'size' => 16],
             'alignment' => ['horizontal' => 'center'],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']]
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']],
         ]);
 
         // Filter header (if filters exist)
         $headerRow = 2;
-        if (!empty($filterString)) {
-            $sheet->mergeCells('A2:' . $lastCol . '2');
+        if (! empty($filterString)) {
+            $sheet->mergeCells('A2:'.$lastCol.'2');
             $sheet->setCellValue('A2', $filterString);
             $sheet->getStyle('A2')->applyFromArray([
                 'font' => ['bold' => true, 'size' => 12],
                 'alignment' => ['horizontal' => 'center'],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E8F4FD']]
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E8F4FD']],
             ]);
             $headerRow = 3; // Move table headers down
         }
 
         // Table headers
-        $sheet->setCellValue('A' . $headerRow, 'اليوم / الوقت');
+        $sheet->setCellValue('A'.$headerRow, 'اليوم / الوقت');
         $headerStyle = [
             'font' => ['bold' => true],
             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E2EFDA']],
-            'alignment' => ['horizontal' => 'center']
+            'alignment' => ['horizontal' => 'center'],
         ];
 
-        $sheet->getStyle('A' . $headerRow)->applyFromArray($headerStyle);
+        $sheet->getStyle('A'.$headerRow)->applyFromArray($headerStyle);
 
         $colIndex = 1;
         foreach ($data['timeSlots'] as $slot) {
             $col = chr(65 + $colIndex);
-            $sheet->setCellValue($col . $headerRow, $slot);
-            $sheet->getStyle($col . $headerRow)->applyFromArray($headerStyle);
+            $sheet->setCellValue($col.$headerRow, $slot);
+            $sheet->getStyle($col.$headerRow)->applyFromArray($headerStyle);
             $colIndex++;
         }
 
@@ -667,31 +761,39 @@ class ScheduleExportController extends Controller
             $sheet->getStyle("A{$rowIndex}")->applyFromArray([
                 'font' => ['bold' => true],
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFF2CC']],
-                'alignment' => ['horizontal' => 'center']
+                'alignment' => ['horizontal' => 'center'],
             ]);
 
             $colIndex = 1;
             foreach ($data['timeSlots'] as $slot) {
                 $col = chr(65 + $colIndex);
-                $cell = $col . $rowIndex;
+                $cell = $col.$rowIndex;
                 $entry = $data['table'][$day][$slot] ?? '';
 
-                if (!empty($entry)) {
+                if (! empty($entry)) {
                     $sheet->setCellValue($cell, implode("\n", $entry['html']));
                     $sheet->getStyle($cell)->getAlignment()
                         ->setWrapText(true)
                         ->setVertical('center')
                         ->setHorizontal('center');
 
-                    $courseKey = $entry['course_key'] ?? '';
-                    if (!empty($courseKey)) {
-                        $color = $this->getCourseColor($courseKey, $colorMap);
-                        $rgbColor = $this->hslToHex($color, false); // Excel needs hex without #
-
+                    if (! empty($entry['is_reserved'])) {
                         $sheet->getStyle($cell)->getFill()
                             ->setFillType(Fill::FILL_SOLID)
                             ->getStartColor()
-                            ->setRGB($rgbColor);
+                            ->setRGB('E7E5E4');
+                        $sheet->getStyle($cell)->getFont()->setBold(true);
+                    } else {
+                        $courseKey = $entry['course_key'] ?? '';
+                        if (! empty($courseKey)) {
+                            $color = $this->getCourseColor($courseKey, $colorMap);
+                            $rgbColor = $this->hslToHex($color, false); // Excel needs hex without #
+
+                            $sheet->getStyle($cell)->getFill()
+                                ->setFillType(Fill::FILL_SOLID)
+                                ->getStartColor()
+                                ->setRGB($rgbColor);
+                        }
                     }
                 }
                 $colIndex++;
@@ -704,12 +806,12 @@ class ScheduleExportController extends Controller
         $metadata = $this->calculateMetadata($entries);
 
         // Metadata title
-        $sheet->mergeCells('A' . $metadataStartRow . ':D' . $metadataStartRow);
-        $sheet->setCellValue('A' . $metadataStartRow, 'إحصائيات الجدول');
-        $sheet->getStyle('A' . $metadataStartRow)->applyFromArray([
+        $sheet->mergeCells('A'.$metadataStartRow.':D'.$metadataStartRow);
+        $sheet->setCellValue('A'.$metadataStartRow, 'إحصائيات الجدول');
+        $sheet->getStyle('A'.$metadataStartRow)->applyFromArray([
             'font' => ['bold' => true, 'size' => 14],
             'alignment' => ['horizontal' => 'center'],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']]
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']],
         ]);
 
         // Metadata headers
@@ -721,24 +823,24 @@ class ScheduleExportController extends Controller
             $col = chr(65 + $i); // A, B, C, D
 
             // Header
-            $sheet->setCellValue($col . $metadataHeaderRow, $metadataHeaders[$i]);
-            $sheet->getStyle($col . $metadataHeaderRow)->applyFromArray([
+            $sheet->setCellValue($col.$metadataHeaderRow, $metadataHeaders[$i]);
+            $sheet->getStyle($col.$metadataHeaderRow)->applyFromArray([
                 'font' => ['bold' => true],
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E2EFDA']],
-                'alignment' => ['horizontal' => 'center']
+                'alignment' => ['horizontal' => 'center'],
             ]);
 
             // Value
-            $sheet->setCellValue($col . ($metadataHeaderRow + 1), $metadataValues[$i]);
-            $sheet->getStyle($col . ($metadataHeaderRow + 1))->applyFromArray([
+            $sheet->setCellValue($col.($metadataHeaderRow + 1), $metadataValues[$i]);
+            $sheet->getStyle($col.($metadataHeaderRow + 1))->applyFromArray([
                 'font' => ['bold' => true],
                 'alignment' => ['horizontal' => 'center'],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFFFFF']]
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFFFFF']],
             ]);
         }
 
         // Metadata table borders
-        $metadataTableRange = "A{$metadataStartRow}:D" . ($metadataHeaderRow + 1);
+        $metadataTableRange = "A{$metadataStartRow}:D".($metadataHeaderRow + 1);
         $sheet->getStyle($metadataTableRange)->getBorders()
             ->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
@@ -747,8 +849,16 @@ class ScheduleExportController extends Controller
             $sheet->getColumnDimension($col)->setWidth(25);
         }
 
+        // Signature block under the table (one row, right to left)
+        $workbookExporter->addSignatures(
+            $sheet,
+            $this->signatureTitlesFor(! empty($filters['staff_id'])),
+            $metadataHeaderRow + 3,
+            $colCount
+        );
+
         // Table formatting
-        $tableRange = "A{$headerRow}:{$lastCol}" . ($rowIndex - 1);
+        $tableRange = "A{$headerRow}:{$lastCol}".($rowIndex - 1);
         $sheet->getStyle($tableRange)->getBorders()
             ->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
@@ -763,7 +873,7 @@ class ScheduleExportController extends Controller
         }
 
         // Data cell alignment
-        $dataRange = "B" . ($headerRow + 1) . ":{$lastCol}" . ($rowIndex - 1);
+        $dataRange = 'B'.($headerRow + 1).":{$lastCol}".($rowIndex - 1);
         $sheet->getStyle($dataRange)->getAlignment()
             ->setWrapText(true)
             ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
@@ -778,11 +888,275 @@ class ScheduleExportController extends Controller
 
         return response($content)
             ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            ->header('Content-Disposition', 'attachment; filename="'.$filename.'"');
+    }
+
+    public function exportFullExcel(
+        ExportFullScheduleRequest $request,
+        ScheduleWorkbookExporter $workbookExporter
+    ) {
+        set_time_limit(300);
+
+        $validated = $request->validated();
+        $scheduleId = $validated['schedule_id'];
+        $sections = $validated['sections'];
+        $schedule = Schedule::select([
+            'nameAr',
+            'nameEn',
+            'reserved_period_day',
+            'reserved_period_start_time',
+            'reserved_period_end_time',
+            'reserved_period_label_ar',
+        ])->findOrFail($scheduleId);
+        $reservedPeriod = $schedule->reservedPeriod();
+        $entries = $this->loadFilteredData($scheduleId, []);
+        $spreadsheet = new Spreadsheet;
+        $colorMap = [];
+
+        $this->addFullWorkbookSheet(
+            $workbookExporter,
+            $spreadsheet,
+            'الجدول الرئيسي',
+            $schedule->nameAr ?? $schedule->nameEn ?? 'الجدول',
+            '',
+            $entries,
+            $reservedPeriod,
+            $colorMap
+        );
+
+        foreach ($sections as $section) {
+            if ($section === 'halls') {
+                foreach ($this->referencedRooms($entries, 'hall_id', 'hall_name', 'hall') as $hall) {
+                    $filteredEntries = array_values(array_filter(
+                        $entries,
+                        fn (array $entry): bool => (int) ($entry['hall_id'] ?? 0) === $hall['id']
+                    ));
+                    $this->addFullWorkbookSheet(
+                        $workbookExporter,
+                        $spreadsheet,
+                        'قاعة - '.$hall['name'],
+                        $schedule->nameAr ?? $schedule->nameEn ?? 'الجدول',
+                        'القاعة: '.$hall['name'],
+                        $filteredEntries,
+                        $reservedPeriod,
+                        $colorMap
+                    );
+                }
+            }
+
+            if ($section === 'labs') {
+                foreach ($this->referencedRooms($entries, 'lap_id', 'lap_name', 'lap') as $lab) {
+                    $filteredEntries = array_values(array_filter(
+                        $entries,
+                        fn (array $entry): bool => (int) ($entry['lap_id'] ?? 0) === $lab['id']
+                    ));
+                    $this->addFullWorkbookSheet(
+                        $workbookExporter,
+                        $spreadsheet,
+                        'معمل - '.$lab['name'],
+                        $schedule->nameAr ?? $schedule->nameEn ?? 'الجدول',
+                        'المعمل: '.$lab['name'],
+                        $filteredEntries,
+                        $reservedPeriod,
+                        $colorMap
+                    );
+                }
+            }
+
+            if ($section === 'lecturers') {
+                $this->addStaffCategorySheets(
+                    $workbookExporter,
+                    $spreadsheet,
+                    $schedule->nameAr ?? $schedule->nameEn ?? 'الجدول',
+                    $entries,
+                    $reservedPeriod,
+                    $colorMap,
+                    ['professor', 'associate professor', 'assistant professor'],
+                    'عضو هيئة تدريس'
+                );
+            }
+
+            if ($section === 'teaching_assistants') {
+                $this->addStaffCategorySheets(
+                    $workbookExporter,
+                    $spreadsheet,
+                    $schedule->nameAr ?? $schedule->nameEn ?? 'الجدول',
+                    $entries,
+                    $reservedPeriod,
+                    $colorMap,
+                    ['assistant lecturer', 'teaching assistant'],
+                    'هيئة معاونة'
+                );
+            }
+
+            if ($section === 'academic_lists') {
+                $this->addAcademicListLevelSheets(
+                    $workbookExporter,
+                    $spreadsheet,
+                    $schedule->nameAr ?? $schedule->nameEn ?? 'الجدول',
+                    $entries,
+                    $reservedPeriod,
+                    $colorMap
+                );
+            }
+        }
+
+        $filename = $this->generateFullExportFilename($schedule);
+        $writer = new Xlsx($spreadsheet);
+
+        ob_start();
+        $writer->save('php://output');
+        $content = ob_get_clean();
+
+        return response($content)
+            ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->header('Content-Disposition', 'attachment; filename="'.$filename.'"');
+    }
+
+    private function addAcademicListLevelSheets(
+        ScheduleWorkbookExporter $workbookExporter,
+        Spreadsheet $spreadsheet,
+        string $scheduleTitle,
+        array $entries,
+        ?array $reservedPeriod,
+        array &$colorMap
+    ): void {
+        $pairs = [];
+        foreach ($entries as $entry) {
+            foreach ($entry['academic_ids'] ?? [] as $academicId) {
+                foreach ($entry['academic_levels'] ?? [] as $academicLevel) {
+                    $pairs[(int) $academicId.':'.(int) $academicLevel] = [
+                        'academic_id' => (int) $academicId,
+                        'academic_level' => (int) $academicLevel,
+                    ];
+                }
+            }
+        }
+
+        $academics = Academic::whereIn(
+            'id',
+            array_unique(array_column($pairs, 'academic_id'))
+        )->get(['id', 'name', 'name_ar'])->keyBy('id');
+
+        usort($pairs, function (array $left, array $right) use ($academics): int {
+            $leftName = $academics[$left['academic_id']]->name_ar
+                ?? $academics[$left['academic_id']]->name
+                ?? '';
+            $rightName = $academics[$right['academic_id']]->name_ar
+                ?? $academics[$right['academic_id']]->name
+                ?? '';
+
+            return [$leftName, $left['academic_level']] <=> [$rightName, $right['academic_level']];
+        });
+
+        foreach ($pairs as $pair) {
+            $academic = $academics->get($pair['academic_id']);
+            if (! $academic) {
+                continue;
+            }
+
+            $academicName = $academic->name_ar ?? $academic->name;
+            $filteredEntries = array_values(array_filter($entries, function (array $entry) use ($pair): bool {
+                return in_array($pair['academic_id'], $entry['academic_ids'] ?? [], true)
+                    && in_array($pair['academic_level'], $entry['academic_levels'] ?? [], true);
+            }));
+
+            $this->addFullWorkbookSheet(
+                $workbookExporter,
+                $spreadsheet,
+                'لائحة - '.$academicName.' - L'.$pair['academic_level'],
+                $scheduleTitle,
+                'القائمة الأكاديمية: '.$academicName.' - المستوى: '.$pair['academic_level'],
+                $filteredEntries,
+                $reservedPeriod,
+                $colorMap
+            );
+        }
+    }
+
+    private function addStaffCategorySheets(
+        ScheduleWorkbookExporter $workbookExporter,
+        Spreadsheet $spreadsheet,
+        string $scheduleTitle,
+        array $entries,
+        ?array $reservedPeriod,
+        array &$colorMap,
+        array $degreeNames,
+        string $categoryLabel
+    ): void {
+        $members = Lecturer::with('academicDegree:id,name,prefix,prefix_ar')
+            ->whereHas('academicDegree', function ($query) use ($degreeNames) {
+                $query->whereIn('name', $degreeNames);
+            })
+            ->orderBy('name')
+            ->get(['id', 'name', 'name_ar', 'academic_id']);
+
+        foreach ($members as $member) {
+            $degree = $member->academicDegree;
+            $prefix = $degree?->prefix_ar
+                ?? $degree?->prefix
+                ?? '';
+            $memberName = trim($prefix.' '.($member->name_ar ?? $member->name));
+            $filteredEntries = array_values(array_filter(
+                $entries,
+                fn (array $entry): bool => (int) ($entry['lecturer_id'] ?? 0) === $member->id
+            ));
+            $this->addFullWorkbookSheet(
+                $workbookExporter,
+                $spreadsheet,
+                $categoryLabel.' - '.$memberName,
+                $scheduleTitle,
+                $categoryLabel.': '.$memberName,
+                $filteredEntries,
+                $reservedPeriod,
+                $colorMap,
+                true
+            );
+        }
+    }
+
+    private function addFullWorkbookSheet(
+        ScheduleWorkbookExporter $workbookExporter,
+        Spreadsheet $spreadsheet,
+        string $worksheetTitle,
+        string $scheduleTitle,
+        string $filterString,
+        array $entries,
+        ?array $reservedPeriod,
+        array &$colorMap,
+        bool $isMemberSchedule = false
+    ): void {
+        $data = $this->buildTable($entries, 'excel', $reservedPeriod);
+        $workbookExporter->addWorksheet(
+            $spreadsheet,
+            $worksheetTitle,
+            $scheduleTitle,
+            $filterString,
+            $data,
+            $entries,
+            $colorMap,
+            $this->signatureTitlesFor($isMemberSchedule)
+        );
+    }
+
+    // عناوين خانات التوقيع: جدول العضو (معلم أو محاضر) يبدأ برئيس القسم، وغير ذلك بمنسق الجداول
+    private function signatureTitlesFor(bool $forMember): array
+    {
+        return $forMember
+            ? ['رئيس القسم', 'وكيل الكلية', 'عميد الكلية']
+            : ['منسق الجداول', 'وكيل الكلية', 'عميد الكلية'];
+    }
+
+    private function generateFullExportFilename(Schedule $schedule): string
+    {
+        $scheduleName = $schedule->nameEn ?? $schedule->nameAr ?? 'schedule';
+        $cleanScheduleName = $this->cleanForFilename($scheduleName) ?: 'schedule';
+
+        return $cleanScheduleName.'_full_'.date('Y-m-d_H-i-s').'.xlsx';
     }
 
     // دالة مساعدة لإنشاء HTML لـ PDF
-    private function generatePdfHtml($title, $table, $timeSlots, $days, $filterString = '', $entries = [])
+    private function generatePdfHtml($title, $table, $timeSlots, $days, $filterString = '', $entries = [], $signatureTitles = [])
     {
         $colorMap = [];
 
@@ -803,12 +1177,12 @@ class ScheduleExportController extends Controller
     </head><body>';
 
         $html .= '<div class="header">
-        <div class="title">' . htmlspecialchars($title) . '</div>
-        <div style="font-size: 16px; margin-top: 5px;">للعام الجامعي ' . date('Y') . '/' . (date('Y') + 1) . ' - الفصل الدراسي الأول</div>';
+        <div class="title">'.htmlspecialchars($title).'</div>
+        <div style="font-size: 16px; margin-top: 5px;">للعام الجامعي '.date('Y').'/'.(date('Y') + 1).' - الفصل الدراسي الأول</div>';
 
         // Add filter string if exists
-        if (!empty($filterString)) {
-            $html .= '<div class="filters">' . htmlspecialchars($filterString) . '</div>';
+        if (! empty($filterString)) {
+            $html .= '<div class="filters">'.htmlspecialchars($filterString).'</div>';
         }
 
         $html .= '</div>';
@@ -816,31 +1190,33 @@ class ScheduleExportController extends Controller
         // Rest of the table generation remains the same...
         $html .= '<table><thead><tr><th class="day-header">اليوم / الوقت</th>';
         foreach ($timeSlots as $slot) {
-            $html .= '<th class="time-header">' . htmlspecialchars($slot) . '</th>';
+            $html .= '<th class="time-header">'.htmlspecialchars($slot).'</th>';
         }
         $html .= '</tr></thead><tbody>';
 
         foreach ($days as $day) {
-            $html .= '<tr><td class="day-header"><strong>' . htmlspecialchars($day) . '</strong></td>';
+            $html .= '<tr><td class="day-header"><strong>'.htmlspecialchars($day).'</strong></td>';
 
             foreach ($timeSlots as $slot) {
                 $entry = $table[$day][$slot] ?? '';
                 if (empty($entry)) {
                     $html .= '<td></td>';
+
                     continue;
                 }
 
-                $courseKey = $entry['course_key'] ?? '';
                 $backgroundColor = '#f0f0f0'; // Default color
 
-                if (!empty($courseKey)) {
+                if (! empty($entry['is_reserved'])) {
+                    $backgroundColor = '#e7e5e4';
+                } elseif (! empty($entry['course_key'])) {
+                    $courseKey = $entry['course_key'];
                     $hslColor = $this->getCourseColor($courseKey, $colorMap);
                     $backgroundColor = $this->hslToHex($hslColor, true); // PDF needs hex with #
                 }
 
-
-                $cellContent = '<div class="entry-content">' . implode('', $entry['html']) . '</div>';
-                $html .= '<td style="background-color:' . $backgroundColor . ';">' . $cellContent . '</td>';
+                $cellContent = '<div class="entry-content">'.implode('', $entry['html']).'</div>';
+                $html .= '<td style="background-color:'.$backgroundColor.';">'.$cellContent.'</td>';
             }
 
             $html .= '</tr>';
@@ -848,7 +1224,7 @@ class ScheduleExportController extends Controller
 
         $html .= '</tbody></table>';
         $html .= '<div style="text-align:center; margin-top:20px; font-size:12px;">
-        تم إنشاء الجدول في ' . date('Y-m-d H:i') . ' | نظام جدولة المحاضرات
+        تم إنشاء الجدول في '.date('Y-m-d H:i').' | نظام جدولة المحاضرات
     </div>';
         // Add metadata table before closing
         $metadata = $this->calculateMetadata($entries);
@@ -868,14 +1244,26 @@ class ScheduleExportController extends Controller
         </thead>
         <tbody>
             <tr style="background-color: #FFFFFF;">
-                <td style="text-align: center; padding: 8px; font-weight: bold;">' . $metadata['total_sessions'] . '</td>
-                <td style="text-align: center; padding: 8px; font-weight: bold;">' . $metadata['total_courses'] . '</td>
-                <td style="text-align: center; padding: 8px; font-weight: bold;">' . $metadata['total_rooms'] . '</td>
-                <td style="text-align: center; padding: 8px; font-weight: bold;">' . $metadata['total_staff'] . '</td>
+                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_sessions'].'</td>
+                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_courses'].'</td>
+                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_rooms'].'</td>
+                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_staff'].'</td>
             </tr>
         </tbody>
     </table>
 </div>';
+
+        // خانات التوقيع: صف واحد من اليمين إلى اليسار، عنوان كل مسؤول ومساحة فارغة تحته
+        if (! empty($signatureTitles)) {
+            $signatureCells = '';
+            foreach ($signatureTitles as $signatureTitle) {
+                $signatureCells .= '<td dir="rtl" style="border: none; width: 33%; text-align: center; vertical-align: top; padding: 10px 20px 70px 20px;">'
+                    .'<div style="font-weight: bold; font-size: 14px;">'.htmlspecialchars($signatureTitle).'</div>'
+                    .'</td>';
+            }
+            $html .= '<table dir="rtl" style="width: 100%; margin-top: 30px; page-break-inside: avoid;"><tr>'.$signatureCells.'</tr></table>';
+        }
+
         $html .= '</body></html>';
 
         return $html;
@@ -884,12 +1272,14 @@ class ScheduleExportController extends Controller
     // دالة مساعدة للحصول على الشعارات
     private function getBase64Logo($filename)
     {
-        $path = storage_path('app/public/' . $filename);
+        $path = storage_path('app/public/'.$filename);
         if (file_exists($path)) {
             $mime = mime_content_type($path);
             $data = base64_encode(file_get_contents($path));
+
             return "data:{$mime};base64,{$data}";
         }
+
         return '';
     }
 }

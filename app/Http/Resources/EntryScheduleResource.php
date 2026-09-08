@@ -7,26 +7,31 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class EntryScheduleResource extends JsonResource
 {
-
     public function toArray(Request $request): array
     {
         $locale = $request->header('Accept-Language', 'en');
+
         return [
+            'id' => $this->id,
+
             // Multiple courses support
             'courses' => CourseResource::collection($this->courses),
-
 
             'session_type' => $this->session_type,
             'group_info' => [
                 'group_number' => $this->group_number,
                 'total_groups' => $this->total_groups,
             ],
-            'lab' => $this->lap ? $this->lap : null,
-            'hall' => $this->hall ? $this->hall : null,
+            'lab' => $this->room($this->lap, $this->lap_id, $this->lap_name),
+            'hall' => $this->room($this->hall, $this->hall_id, $this->hall_name),
             'staff' => [
-                'id' => $this->Lecturer->id,
-                'name' => $locale === 'ar' ? $this->Lecturer->name_ar : $this->Lecturer->name,
-                'academic_degree' => new AcademicDegreeResource($this->Lecturer->academicDegree),
+                'id' => $this->lecturer_id,
+                'name' => $locale === 'ar'
+                    ? ($this->lecturer_name_ar ?? $this->Lecturer?->name_ar)
+                    : ($this->lecturer_name ?? $this->Lecturer?->name),
+                'academic_degree' => $this->Lecturer?->academicDegree
+                    ? new AcademicDegreeResource($this->Lecturer->academicDegree)
+                    : null,
 
             ],
             'time_slot' => [
@@ -53,5 +58,23 @@ class EntryScheduleResource extends JsonResource
             'departments' => DepartmentResource::collection($this->departments),
 
         ];
+    }
+
+    /**
+     * Room display data with the point-in-time snapshot name taking
+     * precedence. Legacy entries (no snapshot) fall back to the live
+     * relation; entries whose room was deleted keep their recorded name.
+     */
+    private function room($live, $id, ?string $snapshotName): ?array
+    {
+        if ($live) {
+            return $snapshotName !== null
+                ? array_merge($live->toArray(), ['name' => $snapshotName])
+                : $live->toArray();
+        }
+
+        return ($id !== null && $snapshotName !== null)
+            ? ['id' => $id, 'name' => $snapshotName]
+            : null;
     }
 }

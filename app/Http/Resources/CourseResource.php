@@ -18,14 +18,15 @@ class CourseResource extends JsonResource
 
         return [
             'name' => $locale === 'ar' ? $this->name_ar : $this->name_en,
-            'id'                   => $this->id,
-            'code'                 => $this->code,
-            'nameAr'              => $this->name_ar,
-            'nameEn'              => $this->name_en,
-            'lectureHours'        => $this->lecture_hours,
-            'practicalHours'      => $this->practical_hours,
-            'creditHours'         => $this->credit_hours,
-            'academic_id'          => $this->academic_id,
+            'id' => $this->id,
+            'code' => $this->code,
+            'nameAr' => $this->name_ar,
+            'nameEn' => $this->name_en,
+            'lectureHours' => $this->lecture_hours,
+            'practicalHours' => $this->practical_hours,
+            'creditHours' => $this->credit_hours,
+            'preRequisiteCourseCode' => $this->practical_components,
+            'academic_id' => $this->academic_id,
         ];
     }
 }

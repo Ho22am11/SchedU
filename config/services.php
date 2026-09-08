@@ -31,4 +31,10 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    // Schedule generation engine (FastAPI) used to validate editor changes.
+    'engine' => [
+        'url' => env('ENGINE_URL', 'http://127.0.0.1:9000'),
+        'timeout' => env('ENGINE_TIMEOUT', 120),
+    ],
+
 ];

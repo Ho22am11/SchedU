@@ -2,8 +2,8 @@
 
 namespace App\Http\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 class StoreScheduleRequest extends FormRequest
@@ -18,6 +18,18 @@ class StoreScheduleRequest extends FormRequest
         return [
             'nameEn' => 'required|string|max:255',
             'nameAr' => 'required|string|max:255',
+            'source_schedule_id' => 'nullable|exists:schedules,id',
+
+            // The room pool this schedule's generation was allowed to use.
+            'available_hall_ids' => 'nullable|array',
+            'available_hall_ids.*' => 'integer|distinct|exists:halls,id',
+            'available_lab_ids' => 'nullable|array',
+            'available_lab_ids.*' => 'integer|distinct|exists:laps,id',
+
+            'reserved_period' => 'nullable|array',
+            'reserved_period.day' => 'required_with:reserved_period|in:sunday,monday,tuesday,wednesday,thursday',
+            'reserved_period.start_time' => 'required_with:reserved_period|date_format:H:i',
+            'reserved_period.end_time' => 'required_with:reserved_period|date_format:H:i|after:reserved_period.start_time',
             'schedule' => 'required|array|min:1',
 
             'schedule.*.course_ids' => 'required|array|min:1',
@@ -59,6 +71,7 @@ class StoreScheduleRequest extends FormRequest
         return [
             'nameEn.required' => 'The English name is required.',
             'nameAr.required' => 'The Arabic name is required.',
+            'source_schedule_id.exists' => 'Source schedule not found.',
             'schedule.required' => 'At least one schedule entry is required.',
             'schedule.array' => 'Schedule must be an array.',
 
@@ -106,7 +119,6 @@ class StoreScheduleRequest extends FormRequest
             'schedule.*.department_ids.*.exists' => 'One or more departments do not exist.',
         ];
     }
-
 
     protected function failedValidation(Validator $validator)
     {

@@ -4,53 +4,65 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\DepartmentResource;
 use App\Models\Department;
+use App\Services\DeletionGuard;
 use App\Traits\ApiResponseTrait;
 use Illuminate\Http\Request;
 
 class DepartmentController extends Controller
 {
-    use ApiResponseTrait ;
+    use ApiResponseTrait;
+
+    public function __construct(private DeletionGuard $deletionGuard) {}
+
     public function index()
     {
         $departments = Department::all();
 
-       
-        return $this->ApiResponse(  DepartmentResource::collection($departments), 'get departments successfully' , 200);
+        return $this->ApiResponse(DepartmentResource::collection($departments), 'get departments successfully', 200);
     }
 
-   
-
-   
     public function store(Request $request)
     {
         $department = Department::create($request->all());
-        return $this->ApiResponse(new DepartmentResource($department) , 'stored department successfully' , 201);
+
+        return $this->ApiResponse(new DepartmentResource($department), 'stored department successfully', 201);
     }
 
-    
-    public function show( $id)
+    public function show($id)
     {
         $department = Department::find($id);
-        return $this->ApiResponse(new DepartmentResource($department) , 'showed department successfully' , 200);
+
+        return $this->ApiResponse(new DepartmentResource($department), 'showed department successfully', 200);
 
     }
 
-
-
-    
-    public function update(Request $request,  $id)
+    public function update(Request $request, $id)
     {
         $department = Department::find($id);
         $department->update($request->all());
-        return $this->ApiResponse(new DepartmentResource($department) , 'updated department successfully' , 200);
+
+        return $this->ApiResponse(new DepartmentResource($department), 'updated department successfully', 200);
 
     }
 
-    
-    public function destroy( $id)
-    { 
-        Department::destroy($id);
-        return $this->ApiResponse( null , 'delete department successfully' , 200);
+    public function destroy($id)
+    {
+        $department = Department::findOrFail($id);
+
+        // Departments sit behind RESTRICT foreign keys (lecturers, academics),
+        // so there is no force path here.
+        $blocked = $this->deletionGuard->guard(
+            'department',
+            [$department->id],
+            false,
+            fn () => $department->delete()
+        );
+
+        if ($blocked !== null) {
+            return $blocked;
+        }
+
+        return $this->ApiResponse(null, 'delete department successfully', 200);
 
     }
 }

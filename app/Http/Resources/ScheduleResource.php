@@ -17,17 +17,19 @@ class ScheduleResource extends JsonResource
         $locale = $request->header('Accept-Language', 'en');
         $entries = $this->whenLoaded('entries');
 
-
         return [
             'id' => $this->id,
             'name' => $locale === 'ar' ? $this->nameAr : $this->nameEn,
             'nameAr' => $this->nameAr,
             'nameEn' => $this->nameEn,
             'create_at' => $this->created_at,
+            'updated_at' => $this->updated_at?->toISOString(),
+            'reserved_period' => $this->reservedPeriod(),
             'entries' => EntryScheduleResource::collection($this->whenLoaded('entries')),
             'metadata' => $this->whenLoaded('entries', function () use ($entries) {
-                if (!$entries)
+                if (! $entries) {
                     return [];
+                }
 
                 // Calculate unique courses from course_ids arrays
                 $allCourseIds = collect();
