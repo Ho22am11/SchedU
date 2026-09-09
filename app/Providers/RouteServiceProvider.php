@@ -25,7 +25,11 @@ class RouteServiceProvider extends ServiceProvider
     public function boot(): void
     {
         RateLimiter::for('api', function (Request $request) {
-            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+            // Internal admin tool plus a machine consumer (the generation
+            // engine, which bursts a dozen calls whenever it rebuilds editor
+            // state). The Laravel default of 60/min produced false
+            // "Too Many Attempts" errors during normal editor usage.
+            return Limit::perMinute(600)->by($request->user()?->id ?: $request->ip());
         });
 
         $this->routes(function () {
