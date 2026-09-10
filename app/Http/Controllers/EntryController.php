@@ -43,6 +43,14 @@ class EntryController extends Controller
             return $this->reject($mismatch);
         }
 
+        // External-venue lectures book no room — moving them moves time
+        // only; a room appearing here would fake a hall booking.
+        if ($this->isRoomless($entry)
+            && (! empty($validated['hall_id']) || ! empty($validated['lab_id']))
+        ) {
+            return $this->reject('This session is hosted at an external venue and cannot be assigned a room.');
+        }
+
         $change = [
             'type' => 'move',
             'entry_id' => $entry->id,
@@ -116,6 +124,9 @@ class EntryController extends Controller
         }
         if ($target->session_type !== $entry->session_type) {
             return $this->reject('Only entries of the same session type can be swapped.');
+        }
+        if ($this->isRoomless($entry) !== $this->isRoomless($target)) {
+            return $this->reject('Only entries with the same room arrangement can be swapped: a roomless external-venue session cannot trade places with a roomed one.');
         }
 
         if ($response = $this->guardAgainstConcurrentEdit($request, $schedule)) {
@@ -205,6 +216,16 @@ class EntryController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Roomless entries are external-venue lectures: they reserve time and
+     * their lecturer's time but no room of ours. Local entries always carry
+     * exactly one room.
+     */
+    private function isRoomless(ScheduleEntry $entry): bool
+    {
+        return $entry->hall_id === null && $entry->lap_id === null;
     }
 
     /**

@@ -41,7 +41,7 @@ class ScheduleController extends Controller
             return $schedule;
         });
 
-        $schedule = Schedule::with(['entries.lecturer.academicDegree'])
+        $schedule = Schedule::with(['entries.lecturer.academicDegree', 'entries.externalCourse'])
             ->findOrFail($schedule->id);
 
         return $this->ApiResponse(
@@ -53,7 +53,8 @@ class ScheduleController extends Controller
 
     public function generationContext($id)
     {
-        $schedule = Schedule::with('entries')->findOrFail($id);
+        $schedule = Schedule::with(['entries', 'entries.externalCourse:id,lecture_venue'])
+            ->findOrFail($id);
 
         return response()->json([
             'data' => [
@@ -63,6 +64,12 @@ class ScheduleController extends Controller
                 'entries' => $schedule->entries->map(function ($entry) {
                     return [
                         'id' => $entry->id,
+                        'entry_kind' => $entry->entry_kind,
+                        'external_course_id' => $entry->external_course_id,
+                        // "ours"|"external" on external entries so the engine
+                        // can tell a roomless external-venue lecture from a
+                        // hall booking; null for local course entries.
+                        'lecture_venue' => $entry->externalCourse?->lecture_venue,
                         'course_ids' => $entry->course_ids,
                         'session_type' => $entry->session_type,
                         'group_number' => $entry->group_number,
@@ -85,8 +92,12 @@ class ScheduleController extends Controller
 
     public function show(Request $request, $id)
     {
-        $schedule = Schedule::with(['entries.lap', 'entries.hall', 'entries.lecturer.academicDegree'])
-            ->findOrFail($id);
+        $schedule = Schedule::with([
+            'entries.lap',
+            'entries.hall',
+            'entries.lecturer.academicDegree',
+            'entries.externalCourse',
+        ])->findOrFail($id);
 
         $staffId = $request->query('staff_id');
         $hallId = $request->query('hall_id');
@@ -157,7 +168,7 @@ class ScheduleController extends Controller
             $this->createEntriesWithSnapshots($schedule, $validated['schedule']);
         });
 
-        $schedule->load(['entries.lecturer.academicDegree']);
+        $schedule->load(['entries.lecturer.academicDegree', 'entries.externalCourse']);
 
         return $this->ApiResponse(
             new ScheduleResource($schedule),
@@ -196,6 +207,14 @@ class ScheduleController extends Controller
      * Create the schedule's entries, recording the room and lecturer display
      * names as they are right now. Schedule history renders from these
      * snapshots, so later renames or deletions never rewrite the past.
+     *
+     * External entries (entry_kind = "external") carry no local course,
+     * academic, department, or staff data: their lecturer is nullable (no
+     * snapshot when absent) and their room columns follow the component
+     * rules — labs book a lab, lectures a hall, external-venue lectures
+     * neither. Identity lives in external_course_id; the course's own
+     * display data always comes from its live row, which the restricting FK
+     * keeps in place as long as history refers to it.
      */
     private function createEntriesWithSnapshots(Schedule $schedule, array $entries): void
     {
@@ -208,10 +227,13 @@ class ScheduleController extends Controller
             ->keyBy('id');
 
         foreach ($entries as $entry) {
+            $isExternal = ($entry['entry_kind'] ?? 'course') === 'external';
             $lecturer = $lecturers->get($entry['lecturer_id'] ?? null);
 
             $schedule->entries()->create([
-                'course_ids' => $entry['course_ids'],
+                'entry_kind' => $isExternal ? 'external' : 'course',
+                'external_course_id' => $isExternal ? $entry['external_course_id'] : null,
+                'course_ids' => $entry['course_ids'] ?? [],
                 'session_type' => $entry['session_type'],
                 'group_number' => $entry['group_info']['group_number'],
                 'total_groups' => $entry['group_info']['total_groups'],
@@ -219,16 +241,16 @@ class ScheduleController extends Controller
                 'hall_name' => $hallNames[$entry['hall_id'] ?? null] ?? null,
                 'lap_id' => $entry['lab_id'] ?? null,     // JSON field is lab_id, the DB column is lap_id
                 'lap_name' => $lapNames[$entry['lab_id'] ?? null] ?? null,
-                'lecturer_id' => $entry['lecturer_id'],
+                'lecturer_id' => $entry['lecturer_id'] ?? null,
                 'lecturer_name' => $lecturer?->name,
                 'lecturer_name_ar' => $lecturer?->name_ar,
                 'Day' => $entry['time_slot']['day'],
                 'startTime' => $entry['time_slot']['start_time'],
                 'endTime' => $entry['time_slot']['end_time'],
                 'student_count' => $entry['student_count'],
-                'academic_ids' => $entry['academic_ids'],
-                'academic_levels' => $entry['academic_levels'],
-                'department_ids' => $entry['department_ids'],
+                'academic_ids' => $entry['academic_ids'] ?? [],
+                'academic_levels' => $entry['academic_levels'] ?? [],
+                'department_ids' => $entry['department_ids'] ?? [],
             ]);
         }
     }

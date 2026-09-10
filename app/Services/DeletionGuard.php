@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Academic;
+use App\Models\ExternalCourseStaff;
 use App\Models\Lecturer;
 use App\Models\ScheduleEntry;
 use Closure;
@@ -60,7 +61,7 @@ class DeletionGuard
         $counts = match ($type) {
             'hall' => $this->entryCounts('hall_id', $ids),
             'lap' => $this->entryCounts('lap_id', $ids),
-            'lecturer' => $this->entryCounts('lecturer_id', $ids),
+            'lecturer' => $this->lecturerCounts($ids),
             'department' => $this->departmentCounts($ids),
         };
 
@@ -79,6 +80,29 @@ class DeletionGuard
             ->groupBy($column)
             ->pluck('usage_count', $column)
             ->all();
+    }
+
+    /**
+     * Lecturers are referenced by scheduled sessions and by external course
+     * staff distributions (the FK there cascades, like lecturer_assignments).
+     * Count both so an unforced delete surfaces the usage before the cascade
+     * silently thins an external course's distribution.
+     *
+     * @return array<int, int>
+     */
+    private function lecturerCounts(array $ids): array
+    {
+        $counts = $this->entryCounts('lecturer_id', $ids);
+
+        ExternalCourseStaff::whereIn('staff_id', $ids)
+            ->selectRaw('staff_id, count(*) as usage_count')
+            ->groupBy('staff_id')
+            ->pluck('usage_count', 'staff_id')
+            ->each(function (int $count, int $id) use (&$counts) {
+                $counts[$id] = ($counts[$id] ?? 0) + $count;
+            });
+
+        return $counts;
     }
 
     /**

@@ -39,6 +39,16 @@ class ScheduleEntry extends Model
     }
 
     /**
+     * Set only on external entries (entry_kind = "external"); local course
+     * entries keep their course_ids arrays. The FK restricts while schedule
+     * history refers to the course.
+     */
+    public function externalCourse()
+    {
+        return $this->belongsTo(ExternalCourse::class);
+    }
+
+    /**
      * Re-record the point-in-time room names from the current hall_id/lap_id.
      * Called whenever a move or swap reassigns the room so the snapshot always
      * matches the entry's placement. At most one of the two rooms is set.

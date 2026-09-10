@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\CourseController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EntryController;
+use App\Http\Controllers\ExternalCourseController;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\HallController;
 use App\Http\Controllers\LapController;
@@ -110,6 +111,7 @@ Route::delete('/halls/bulk', [HallController::class, 'bulkDestroy']);
 Route::resource('/halls', HallController::class);
 Route::delete('/laps/bulk', [LapController::class, 'bulkDestroy']);
 Route::resource('/laps', LapController::class);
+Route::resource('/external-courses', ExternalCourseController::class);
 Route::get('/get-lecturers-ByType', [LecturerController::class, 'getStaffByType']);
 Route::get('/academic-degrees', [AcademicDegreeController::class, 'index']);
 

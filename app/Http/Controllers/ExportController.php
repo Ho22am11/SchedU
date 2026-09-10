@@ -10,12 +10,14 @@ class ExportController extends Controller
 {
     private function loadData($scheduleId)
     {
+        // The old 'course'/'department' relations were removed when schedule
+        // entries moved to multiple-ID JSON columns — loading them throws.
+        // Courses/academics/departments render through the model accessors.
         $schedule = Schedule::with([
-            'entries.course',
             'entries.lecturer.academicDegree',
             'entries.hall',
             'entries.lap',
-            'entries.department',
+            'entries.externalCourse',
         ])->findOrFail($scheduleId);
 
         if ($schedule->entries->isEmpty()) {
@@ -29,7 +31,15 @@ class ExportController extends Controller
     {
 
         $sessions = $this->loadData($scheduleId);
-        $days = ['sunday' => 'الأحد', 'monday' => 'الاثنين', 'tuesday' => 'الثلاثاء', 'wednesday' => 'الأربعاء', 'thursday' => 'الخميس'];
+        $days = [
+            'saturday' => 'السبت',
+            'sunday' => 'الأحد',
+            'monday' => 'الاثنين',
+            'tuesday' => 'الثلاثاء',
+            'wednesday' => 'الأربعاء',
+            'thursday' => 'الخميس',
+            'friday' => 'الجمعة',
+        ];
         $timeSlots = ['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00', '17:00-19:00'];
 
         $table = [];
@@ -40,18 +50,22 @@ class ExportController extends Controller
         }
 
         foreach ($sessions as $s) {
-            \log::info('Processing session:', [
-                'id' => $s->id,
-                'course_id' => $s->course_id,
-                'day' => $s->Day,
-                'start_time' => $s->startTime,
-                'end_time' => $s->endTime,
-                'session_type' => $s->session_type,
-            ]);
-
             $start = substr($s->startTime, 0, 5);
             $end = substr($s->endTime, 0, 5);
-            $slot = "{$start}-{$end}";
+
+            // Bucket by the containing 2h slot so packed 1h sessions share
+            // their parent cell instead of matching no exact key.
+            $slot = '';
+            foreach ($timeSlots as $timeSlot) {
+                [$slotStart, $slotEnd] = explode('-', $timeSlot);
+                if ($start !== '' && $start >= $slotStart && $end <= $slotEnd) {
+                    $slot = $timeSlot;
+                    break;
+                }
+            }
+            if ($slot === '') {
+                $slot = "{$start}-{$end}";
+            }
 
             $dayEn = strtolower($s->Day);
             $dayAr = $days[$dayEn] ?? null;
@@ -62,14 +76,36 @@ class ExportController extends Controller
                 continue;
             }
 
+            $academic_name = '';
             if ($s->academic) {
                 $academic_name = $locale === 'en' ? $s->academic->name : $s->academic->name_ar;
 
             }
 
-            $name = $locale === 'en' ? $s->course->name_en.' ('.$s->course->code.' )' : '( '.$s->course->code.' )  '.$s->course->name_ar;
-
-            $courseKey = $s->course->code;
+            // External entries render from their own course row; local
+            // entries fall back to the first course of course_ids (the old
+            // single course relation is gone).
+            if (($s->entry_kind ?? 'course') === 'external') {
+                $external = $s->externalCourse;
+                $code = $external?->code;
+                if ($locale === 'en') {
+                    $name = 'External — '.($external?->name_en ?? '').($code ? ' ('.$code.' )' : '');
+                } else {
+                    $name = '( '.$code.' )  '.($external?->name_ar ?? '');
+                }
+                $courseKey = 'external_'.$s->external_course_id;
+            } else {
+                $firstCourse = $s->courses->first();
+                if ($firstCourse) {
+                    $name = $locale === 'en'
+                        ? $firstCourse->name_en.' ('.$firstCourse->code.' )'
+                        : '( '.$firstCourse->code.' )  '.$firstCourse->name_ar;
+                    $courseKey = $firstCourse->code;
+                } else {
+                    $name = '';
+                    $courseKey = '';
+                }
+            }
 
             $type = $s->session_type ?? 'unknown';
 
@@ -88,6 +124,8 @@ class ExportController extends Controller
                 $room = $locale === 'en' ? 'hall'.' '.$hallName : 'قاعه'.' '.$hallName;
             } elseif ($s->session_type === 'lab' && $lapName) {
                 $room = $locale === 'en' ? 'lab'.' '.$lapName : 'معمل'.' '.$lapName;
+            } elseif (($s->entry_kind ?? 'course') === 'external') {
+                $room = $locale === 'en' ? 'External venue' : 'قاعة خارجية';
             }
 
             $entry = "$academic_name<br>$name<br>$teacher<br> $room<br>";
@@ -133,7 +171,7 @@ class ExportController extends Controller
         app()->setLocale($locale);
 
         $table = $this->buildTable($scheduleId, $locale);
-        $days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
+        $days = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'];
         $timeSlots = ['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00', '17:00-19:00'];
 
         $schedule = Schedule::findOrFail($scheduleId);
@@ -168,7 +206,12 @@ class ExportController extends Controller
     </div>';
 
         $totalSessions = $schedule->entries->count();
-        $totalCourses = $schedule->entries->groupBy('course_id')->count();
+        // Unique local courses across course_ids plus external courses.
+        $totalCourses = $schedule->entries
+            ->flatMap(fn ($entry) => $entry->course_ids ?? [])
+            ->unique()
+            ->count()
+            + $schedule->entries->pluck('external_course_id')->filter()->unique()->count();
 
         $html .= '
     <div class="schedule-info">

@@ -44,4 +44,9 @@ class Lecturer extends Model
     {
         return $this->morphMany(TimePreference::class, 'timeable');
     }
+
+   public function blockers()
+   {
+        return $this->hasMany(StaffBlocker::class);
+   }
 }

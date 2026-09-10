@@ -6,18 +6,26 @@ use App\Http\Resources\lecturerResource;
 use App\Models\Lecturer;
 use App\Services\DeletionGuard;
 use App\Traits\ApiResponseTrait;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class LecturerController extends Controller
 {
     use ApiResponseTrait;
 
+    /** Working days, matching every other timing surface in the app. */
+    private const BLOCKER_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
+
+    /** Grid starts; each blocker spans exactly two hours from its start. */
+    private const BLOCKER_START_TIMES = ['09:00', '11:00', '13:00', '15:00', '17:00'];
+
     public function __construct(private DeletionGuard $deletionGuard) {}
 
     public function index()
     {
-        $lecturers = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->get();
+        $lecturers = Lecturer::with(['department', 'timingPreference', 'academicDegree', 'blockers'])->get();
 
         return $this->ApiResponse(lecturerResource::collection($lecturers), 'get lecturers successfully', 200);
 
@@ -29,7 +37,7 @@ class LecturerController extends Controller
 
         DB::transaction(function () use ($request, &$createdStaff) {
 
-            foreach ($request['staff'] as $staffData) {
+            foreach ($request['staff'] as $index => $staffData) {
                 $staffMember = Lecturer::create([
                     'name' => $staffData['nameEn'],
                     'name_ar' => $staffData['nameAr'] ?? null,
@@ -45,7 +53,18 @@ class LecturerController extends Controller
                         'endTime' => $tp['endTime'],
                     ]);
                 }
-                $createdStaff[] = $staffMember->load(['department', 'timingPreference', 'academicDegree']);
+
+                $blockers = $staffData['blockers'] ?? [];
+                $this->validateBlockers($blockers, "staff.{$index}.blockers");
+                foreach ($blockers as $blocker) {
+                    $staffMember->blockers()->create([
+                        'day' => $blocker['day'],
+                        'startTime' => $blocker['startTime'],
+                        'endTime' => $blocker['endTime'],
+                        'label' => $blocker['label'],
+                    ]);
+                }
+                $createdStaff[] = $staffMember->load(['department', 'timingPreference', 'academicDegree', 'blockers']);
             }
         });
 
@@ -54,7 +73,7 @@ class LecturerController extends Controller
 
     public function show($id)
     {
-        $lecturer = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->find($id);
+        $lecturer = Lecturer::with(['department', 'timingPreference', 'academicDegree', 'blockers'])->find($id);
         if (! $lecturer) {
             return $this->ApiResponse(null, 'Lecturer not found', 404);
         }
@@ -87,9 +106,23 @@ class LecturerController extends Controller
                     'endTime' => $tp['endTime'],
                 ]);
             }
+
+            $blockers = $request['blockers'] ?? [];
+            $this->validateBlockers($blockers, 'blockers');
+
+            $lecturer->blockers()->delete();
+
+            foreach ($blockers as $blocker) {
+                $lecturer->blockers()->create([
+                    'day' => $blocker['day'],
+                    'startTime' => $blocker['startTime'],
+                    'endTime' => $blocker['endTime'],
+                    'label' => $blocker['label'],
+                ]);
+            }
         });
 
-        $updatedLecturer = Lecturer::with(['department', 'timingPreference', 'academicDegree'])->findOrFail($id);
+        $updatedLecturer = Lecturer::with(['department', 'timingPreference', 'academicDegree', 'blockers'])->findOrFail($id);
 
         return $this->ApiResponse(new lecturerResource($updatedLecturer), 'lecturer updated successfully', 200);
     }
@@ -104,6 +137,7 @@ class LecturerController extends Controller
             $request->boolean('force'),
             function () use ($lecturer) {
                 $lecturer->timingPreference()->delete();
+                $lecturer->blockers()->delete();
                 $lecturer->delete();
             }
         );
@@ -130,6 +164,7 @@ class LecturerController extends Controller
             function () use ($validated) {
                 Lecturer::whereKey($validated['ids'])->get()->each(function (Lecturer $lecturer) {
                     $lecturer->timingPreference()->delete();
+                    $lecturer->blockers()->delete();
                     $lecturer->delete();
                 });
             }
@@ -146,7 +181,7 @@ class LecturerController extends Controller
     {
         $type = $request->query('type', '');
 
-        $query = Lecturer::with(['department', 'academicDegree', 'timingPreference']);
+        $query = Lecturer::with(['department', 'academicDegree', 'timingPreference', 'blockers']);
 
         if ($type === 'lecturers') {
             $lecturerDegrees = ['professor', 'associate professor', 'assistant professor'];
@@ -164,5 +199,66 @@ class LecturerController extends Controller
 
         return $this->ApiResponse(lecturerResource::collection($staff), 'get lecturer successfully', 200);
 
+    }
+
+    /**
+     * Blockers must sit on the same two-hour grid as every other timing
+     * surface in the app: a working day, a grid start, end = start + 2h
+     * (so end ≤ 19:00 by construction), a non-empty label, and no exact
+     * duplicate per staff member. Partial overlaps stay allowed — the
+     * engine unions blocked time.
+     */
+    private function validateBlockers(array $blockers, string $field): void
+    {
+        $seen = [];
+
+        foreach (array_values($blockers) as $index => $blocker) {
+            $base = $field.'.'.$index;
+            $errors = [];
+
+            $day = strtolower(trim((string) ($blocker['day'] ?? '')));
+            if (! in_array($day, self::BLOCKER_DAYS, true)) {
+                $errors[$base.'.day'] = ['The blocker day must be one of: '.implode(', ', self::BLOCKER_DAYS).'.'];
+            }
+
+            $start = $blocker['startTime'] ?? null;
+            $end = $blocker['endTime'] ?? null;
+
+            if (! is_string($start) || ! preg_match('/^\d{2}:\d{2}$/', $start)) {
+                $errors[$base.'.startTime'] = ['The blocker start time must be in HH:MM format.'];
+            }
+
+            if (! is_string($end) || ! preg_match('/^\d{2}:\d{2}$/', $end)) {
+                $errors[$base.'.endTime'] = ['The blocker end time must be in HH:MM format.'];
+            }
+
+            if ($errors === []) {
+                if (! in_array($start, self::BLOCKER_START_TIMES, true)) {
+                    $errors[$base.'.startTime'] = ['The blocker start must be one of: '.implode(', ', self::BLOCKER_START_TIMES).'.'];
+                }
+
+                $expectedEnd = Carbon::createFromFormat('H:i', $start)->addHours(2)->format('H:i');
+                if ($end !== $expectedEnd) {
+                    $errors[$base.'.endTime'] = ['The blocker must span exactly two hours from its start.'];
+                }
+            }
+
+            $label = $blocker['label'] ?? null;
+            if (! is_string($label) || trim($label) === '') {
+                $errors[$base.'.label'] = ['The blocker label is required.'];
+            } elseif (mb_strlen($label) > 191) {
+                $errors[$base.'.label'] = ['The blocker label may not exceed 191 characters.'];
+            }
+
+            $duplicateKey = $day.'|'.$start.'|'.$end;
+            if ($errors === [] && isset($seen[$duplicateKey])) {
+                $errors[$base] = ['This blocker duplicates another blocker on the same staff member.'];
+            }
+            $seen[$duplicateKey] = true;
+
+            if ($errors !== []) {
+                throw ValidationException::withMessages($errors);
+            }
+        }
     }
 }

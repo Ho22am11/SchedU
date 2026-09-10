@@ -9,6 +9,7 @@ use App\Models\Hall;
 use App\Models\Lecturer;
 use App\Models\Schedule;
 use App\Models\ScheduleEntry;
+use App\Models\StaffBlocker;
 use App\Services\ScheduleWorkbookExporter;
 use Illuminate\Http\Request;
 use Mpdf\Mpdf;
@@ -35,10 +36,23 @@ class ScheduleExportController extends Controller
             'lap' => function ($query) {
                 $query->select('id', 'name');
             },
+            'externalCourse' => function ($query) {
+                $query->select(
+                    'id',
+                    'code',
+                    'name_en',
+                    'name_ar',
+                    'requesting_entity_en',
+                    'requesting_entity_ar',
+                    'lecture_venue'
+                );
+            },
         ])
             ->where('schedule_id', $scheduleId)
             ->select(
                 'id',
+                'entry_kind',
+                'external_course_id',
                 'course_ids',
                 'lecturer_id',
                 'hall_id',
@@ -398,11 +412,14 @@ class ScheduleExportController extends Controller
         $uniqueStaff = [];
 
         foreach ($entries as $entry) {
-            // Count unique courses
+            // Count unique courses; external courses count as subjects too.
             if (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
                 foreach ($entry['course_ids'] as $courseId) {
                     $uniqueCourses[$courseId] = true;
                 }
+            }
+            if (! empty($entry['external_course_id'])) {
+                $uniqueCourses['external_'.$entry['external_course_id']] = true;
             }
 
             // Count unique rooms (halls and labs)
@@ -428,7 +445,7 @@ class ScheduleExportController extends Controller
     }
 
     // دالة لبناء الجدول من البيانات
-    private function buildTable($entries, $exportType = 'pdf', ?array $reservedPeriod = null)
+    private function buildTable($entries, $exportType = 'pdf', ?array $reservedPeriod = null, array $staffBlockers = [])
     {
         $daysMap = [
             'saturday' => 'السبت',
@@ -460,15 +477,44 @@ class ScheduleExportController extends Controller
                 continue;
             }
 
-            $slot = ($entry['startTime'] ? substr($entry['startTime'], 0, 5) : '').'-'.
-                ($entry['endTime'] ? substr($entry['endTime'], 0, 5) : '');
+            $entryStart = $entry['startTime'] ? substr($entry['startTime'], 0, 5) : '';
+            $entryEnd = $entry['endTime'] ? substr($entry['endTime'], 0, 5) : '';
+
+            // Bucket by the 2h grid slot CONTAINING the session: a 1h session
+            // (two groups packed back-to-back in one slot) shares its parent
+            // slot — the historical exact-key match would leave it cellless
+            // and silently drop it from the export.
+            $slot = '';
+            foreach ($timeSlots as $timeSlot) {
+                [$slotStart, $slotEnd] = explode('-', $timeSlot);
+                if ($entryStart !== '' && $entryStart >= $slotStart && $entryEnd <= $slotEnd) {
+                    $slot = $timeSlot;
+                    break;
+                }
+            }
+            if ($slot === '') {
+                $slot = $entryStart.'-'.$entryEnd;
+            }
 
             // تجميع بيانات الخلية
             $entryContent = $this->buildCellContent($entry, $exportType);
 
             if (! empty($entryContent)) {
+                // A session shorter than its cell carries its own span so two
+                // packed groups in one cell stay distinguishable.
+                if ($entryStart !== '' && $entryEnd !== '' && (strtotime($entryEnd) - strtotime($entryStart)) < 7200) {
+                    $spanLabel = $entryStart.'-'.$entryEnd;
+                    $entryContent = ($exportType === 'pdf'
+                            ? "<div style='font-size:11px; color:#444;'>{$spanLabel}</div>"
+                            : "[{$spanLabel}]\n")
+                        .$entryContent;
+                }
                 $courseKey = '';
-                if (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
+                if (($entry['entry_kind'] ?? 'course') === 'external') {
+                    // External courses colour by their own identity — their
+                    // course_ids array is always empty.
+                    $courseKey = 'external_'.($entry['external_course_id'] ?? '');
+                } elseif (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
                     $courseModels = \App\Models\Course::whereIn('id', $entry['course_ids'])->get();
                     $courseKey = $courseModels->pluck('code')->implode('-');
                 }
@@ -489,6 +535,27 @@ class ScheduleExportController extends Controller
                     $table[$dayAr][$slot]['html'][] = $separator.$entryContent;
                 }
             }
+        }
+
+        // Blockers of the filtered staff member fill EMPTY cells only — a
+        // real session always wins, since the blocker is enforced at
+        // generation time and never erases history. Unlike the reserved
+        // period below, they never overwrite existing content.
+        foreach ($staffBlockers as $blocker) {
+            $blockerDay = $daysMap[strtolower($blocker['day'])] ?? null;
+            $blockerSlot = $blocker['startTime'].'-'.$blocker['endTime'];
+
+            if ($blockerDay === null || ! isset($table[$blockerDay][$blockerSlot]) || $table[$blockerDay][$blockerSlot] !== '') {
+                continue;
+            }
+
+            $label = (string) ($blocker['label'] ?? '');
+            $table[$blockerDay][$blockerSlot] = [
+                'html' => [$exportType === 'pdf'
+                    ? "<div style='font-weight:bold; font-size:13px;'>".htmlspecialchars($label, ENT_QUOTES, 'UTF-8').'</div>'
+                    : $label],
+                'is_blocker' => true,
+            ];
         }
 
         if ($reservedPeriod === null) {
@@ -523,6 +590,12 @@ class ScheduleExportController extends Controller
         $esc = function ($value) {
             return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
         };
+
+        // External entries render from their own course row — never from
+        // local courses, academics, departments, or a room they don't have.
+        if (($entry['entry_kind'] ?? 'course') === 'external') {
+            return $this->buildExternalCellContent($entry, $exportType, $esc);
+        }
 
         // 1. Course names + Course codes (first line)
         $uniqueCourseNames = '';
@@ -609,6 +682,82 @@ class ScheduleExportController extends Controller
         return $exportType === 'pdf' ? implode('', $parts) : implode("\n", $parts);
     }
 
+    /**
+     * External cell: `خارجي — {name} ({code})`, the requesting entity, the
+     * component, the lab/hall — or "قاعة خارجية" (external venue) when the
+     * outside faculty hosts the lecture — and the staff, or an explicit
+     * no-internal-staff line.
+     */
+    private function buildExternalCellContent($entry, $exportType, $esc)
+    {
+        $course = $entry['external_course'] ?? [];
+        $parts = [];
+
+        $name = $esc($course['name_ar'] ?? $course['name_en'] ?? '');
+        $code = (! empty($course['code']))
+            ? ' ('.$esc($course['code']).')'
+            : '';
+        $title = "خارجي — {$name}{$code}";
+        $parts[] = $exportType === 'pdf'
+            ? "<div style='font-weight:bold; font-size:14px;'>{$title}</div>"
+            : $title;
+
+        $entity = $esc($course['requesting_entity_ar'] ?? $course['requesting_entity_en'] ?? '');
+        if ($entity !== '') {
+            $entityLine = "الجهة الطالبة: {$entity}";
+            $parts[] = $exportType === 'pdf'
+                ? "<div style='font-size:12px;'>{$entityLine}</div>"
+                : $entityLine;
+        }
+
+        // 3. Component + room: labs book a lab, lectures a hall, and an
+        // external-venue lecture books no room of ours at all.
+        $hallName = $esc($entry['hall']['name'] ?? '');
+        $lapName = $esc($entry['lap']['name'] ?? '');
+        $room = '';
+        if (! empty($hallName)) {
+            $room = 'قاعة: '.$hallName;
+        } elseif (! empty($lapName)) {
+            $room = 'معمل: '.$lapName;
+        } elseif (($entry['session_type'] ?? '') === 'lab') {
+            $room = 'معمل';
+        } else {
+            $room = 'قاعة خارجية';
+        }
+
+        $roomDisplay = $exportType === 'pdf'
+            ? "<div style='font-weight:bold;font-size:12px;'>{$room}</div>"
+            : $room;
+        $parts[] = $roomDisplay;
+
+        // 4. Group info - only show if more than 1 group
+        if (isset($entry['group_number']) && isset($entry['total_groups']) && $entry['total_groups'] > 1) {
+            $group = "المجموعة {$esc($entry['group_number'])} / {$esc($entry['total_groups'])}";
+            $parts[] = $exportType === 'pdf'
+                ? "<div style='font-size:12px;'>{$group}</div>"
+                : $group;
+        }
+
+        // 5. Staff name with degree prefix, or an explicit none-assigned line
+        $degreePrefix = $esc($entry['lecturer']['academic_degree']['prefix_ar'] ?? $entry['lecturer']['academic_degree']['prefix'] ?? '');
+        $lecturerName = $esc($entry['lecturer']['name_ar'] ?? $entry['lecturer']['name'] ?? '');
+        $staffName = trim($degreePrefix.' '.$lecturerName);
+
+        if ($staffName !== '') {
+            $staffDisplay = $exportType === 'pdf'
+                ? "<div style='font-weight:bold;font-size:12px;'>{$staffName}</div>"
+                : "{$staffName}";
+            $parts[] = $staffDisplay;
+        } else {
+            $staffDisplay = 'بدون عضو هيئة تدريس داخلي';
+            $parts[] = $exportType === 'pdf'
+                ? "<div style='font-style:italic;font-size:12px;'>{$staffDisplay}</div>"
+                : $staffDisplay;
+        }
+
+        return $exportType === 'pdf' ? implode('', $parts) : implode("\n", $parts);
+    }
+
     // تصدير PDF مع الفلاتر
     public function exportPdfWithFilters(Request $request)
     {
@@ -633,7 +782,8 @@ class ScheduleExportController extends Controller
         $data = $this->buildTable(
             $entries,
             'pdf',
-            $reservedPeriod
+            $reservedPeriod,
+            $this->staffBlockersFor($filters['staff_id'] ?? null)
         );
 
         // Build filter string
@@ -696,7 +846,8 @@ class ScheduleExportController extends Controller
         $data = $this->buildTable(
             $entries,
             'excel',
-            $reservedPeriod
+            $reservedPeriod,
+            $this->staffBlockersFor($filters['staff_id'] ?? null)
         );
 
         $spreadsheet = new Spreadsheet;
@@ -782,6 +933,12 @@ class ScheduleExportController extends Controller
                             ->setFillType(Fill::FILL_SOLID)
                             ->getStartColor()
                             ->setRGB('E7E5E4');
+                        $sheet->getStyle($cell)->getFont()->setBold(true);
+                    } elseif (! empty($entry['is_blocker'])) {
+                        $sheet->getStyle($cell)->getFill()
+                            ->setFillType(Fill::FILL_SOLID)
+                            ->getStartColor()
+                            ->setRGB('FEE2E2');
                         $sheet->getStyle($cell)->getFont()->setBold(true);
                     } else {
                         $courseKey = $entry['course_key'] ?? '';
@@ -910,6 +1067,7 @@ class ScheduleExportController extends Controller
         ])->findOrFail($scheduleId);
         $reservedPeriod = $schedule->reservedPeriod();
         $entries = $this->loadFilteredData($scheduleId, []);
+        $blockersByStaff = $this->blockersByStaff();
         $spreadsheet = new Spreadsheet;
         $colorMap = [];
 
@@ -972,7 +1130,8 @@ class ScheduleExportController extends Controller
                     $reservedPeriod,
                     $colorMap,
                     ['professor', 'associate professor', 'assistant professor'],
-                    'عضو هيئة تدريس'
+                    'عضو هيئة تدريس',
+                    $blockersByStaff
                 );
             }
 
@@ -985,7 +1144,8 @@ class ScheduleExportController extends Controller
                     $reservedPeriod,
                     $colorMap,
                     ['assistant lecturer', 'teaching assistant'],
-                    'هيئة معاونة'
+                    'هيئة معاونة',
+                    $blockersByStaff
                 );
             }
 
@@ -1082,7 +1242,8 @@ class ScheduleExportController extends Controller
         ?array $reservedPeriod,
         array &$colorMap,
         array $degreeNames,
-        string $categoryLabel
+        string $categoryLabel,
+        array $blockersByStaff = []
     ): void {
         $members = Lecturer::with('academicDegree:id,name,prefix,prefix_ar')
             ->whereHas('academicDegree', function ($query) use ($degreeNames) {
@@ -1110,7 +1271,8 @@ class ScheduleExportController extends Controller
                 $filteredEntries,
                 $reservedPeriod,
                 $colorMap,
-                true
+                true,
+                $blockersByStaff[$member->id] ?? []
             );
         }
     }
@@ -1124,9 +1286,10 @@ class ScheduleExportController extends Controller
         array $entries,
         ?array $reservedPeriod,
         array &$colorMap,
-        bool $isMemberSchedule = false
+        bool $isMemberSchedule = false,
+        array $staffBlockers = []
     ): void {
-        $data = $this->buildTable($entries, 'excel', $reservedPeriod);
+        $data = $this->buildTable($entries, 'excel', $reservedPeriod, $staffBlockers);
         $workbookExporter->addWorksheet(
             $spreadsheet,
             $worksheetTitle,
@@ -1145,6 +1308,39 @@ class ScheduleExportController extends Controller
         return $forMember
             ? ['رئيس القسم', 'وكيل الكلية', 'عميد الكلية']
             : ['منسق الجداول', 'وكيل الكلية', 'عميد الكلية'];
+    }
+
+    /**
+     * Blockers are read live from staff, never snapshotted — they describe
+     * the person, not the schedule (same policy as timingPreference).
+     */
+    private function staffBlockersFor($staffId): array
+    {
+        if (empty($staffId)) {
+            return [];
+        }
+
+        return StaffBlocker::query()
+            ->where('lecturer_id', $staffId)
+            ->get(['day', 'startTime', 'endTime', 'label'])
+            ->toArray();
+    }
+
+    /**
+     * All blockers grouped by lecturer_id for the bulk workbook, where each
+     * per-member sheet renders only its owner's blockers.
+     *
+     * @return array<int, array<int, array{day: string, startTime: string, endTime: string, label: string}>>
+     */
+    private function blockersByStaff(): array
+    {
+        $grouped = [];
+
+        foreach (StaffBlocker::query()->get(['lecturer_id', 'day', 'startTime', 'endTime', 'label']) as $blocker) {
+            $grouped[$blocker->lecturer_id][] = $blocker->only(['day', 'startTime', 'endTime', 'label']);
+        }
+
+        return $grouped;
     }
 
     private function generateFullExportFilename(Schedule $schedule): string
@@ -1209,6 +1405,8 @@ class ScheduleExportController extends Controller
 
                 if (! empty($entry['is_reserved'])) {
                     $backgroundColor = '#e7e5e4';
+                } elseif (! empty($entry['is_blocker'])) {
+                    $backgroundColor = '#fee2e2';
                 } elseif (! empty($entry['course_key'])) {
                     $courseKey = $entry['course_key'];
                     $hslColor = $this->getCourseColor($courseKey, $colorMap);

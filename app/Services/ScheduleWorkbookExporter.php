@@ -101,6 +101,16 @@ class ScheduleWorkbookExporter
                     continue;
                 }
 
+                if (! empty($entry['is_blocker'])) {
+                    $sheet->getStyle($cell)->getFill()
+                        ->setFillType(Fill::FILL_SOLID)
+                        ->getStartColor()
+                        ->setRGB('FEE2E2');
+                    $sheet->getStyle($cell)->getFont()->setBold(true);
+
+                    continue;
+                }
+
                 $courseKey = $entry['course_key'] ?? '';
                 if ($courseKey !== '') {
                     $sheet->getStyle($cell)->getFill()
@@ -276,6 +286,10 @@ class ScheduleWorkbookExporter
         foreach ($entries as $entry) {
             foreach ($entry['course_ids'] ?? [] as $courseId) {
                 $courses[$courseId] = true;
+            }
+            // External courses count as subjects too.
+            if (! empty($entry['external_course_id'])) {
+                $courses['external_'.$entry['external_course_id']] = true;
             }
             if (! empty($entry['hall']['id'])) {
                 $rooms['hall_'.$entry['hall']['id']] = true;
