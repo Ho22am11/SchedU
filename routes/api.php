@@ -7,8 +7,8 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\CourseController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EntryController;
-use App\Http\Controllers\ExternalCourseController;
 use App\Http\Controllers\ExportController;
+use App\Http\Controllers\ExternalCourseController;
 use App\Http\Controllers\HallController;
 use App\Http\Controllers\LapController;
 use App\Http\Controllers\LecturerController;
@@ -66,7 +66,7 @@ Route::resource('/departments', DepartmentController::class);
 Route::delete('/lecturers/bulk', [LecturerController::class, 'bulkDestroy']);
 Route::resource('/lecturers', LecturerController::class);
 
-    Route::resource('/courses', CourseController::class)
+Route::resource('/courses', CourseController::class)
     ->middleware([
         'index' => 'can:view courses',
         'store' => 'can:create course',
@@ -93,7 +93,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::post('/regulation-imports/repair', [RegulationImportController::class, 'repair']);
 });
 
-    Route::get('/term-plans/show-item/{id}', [TermPlansController::class, 'ShowItem'])
+Route::get('/term-plans/show-item/{id}', [TermPlansController::class, 'ShowItem'])
     ->middleware('can:show term plan item');
 
 Route::post('/roles/assign', [ManagementRoleController::class, 'assignRole'])
@@ -117,8 +117,12 @@ Route::get('/academic-degrees', [AcademicDegreeController::class, 'index']);
 
 Route::get('/schedules/{id}/generation-context', [ScheduleController::class, 'generationContext']);
 Route::resource('/schedules', ScheduleController::class);
+Route::post('/schedules/{schedule}/blockers', [ScheduleController::class, 'storeBlocker']);
+Route::delete('/schedules/{schedule}/blockers/{blocker}', [ScheduleController::class, 'destroyBlocker']);
 Route::patch('/schedules/{schedule}/entries/{entry}', [EntryController::class, 'update']);
 Route::post('/schedules/{schedule}/entries/{entry}/swap', [EntryController::class, 'swap']);
+Route::post('/schedules/{schedule}/entries', [EntryController::class, 'store']);
+Route::delete('/schedules/{schedule}/entries/{entry}', [EntryController::class, 'destroy']);
 Route::get('/schedule-settings', [ScheduleSettingsController::class, 'show']);
 Route::put('/schedule-settings', [ScheduleSettingsController::class, 'update'])
     ->middleware(['auth:sanctum', 'can:manage schedule settings']);

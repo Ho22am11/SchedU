@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreExternalCourseRequest;
 use App\Http\Resources\ExternalCourseResource;
 use App\Models\ExternalCourse;
-use App\Models\ScheduleEntry;
 use App\Traits\ApiResponseTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -81,23 +80,14 @@ class ExternalCourseController extends Controller
     }
 
     /**
-     * An external course referenced by schedule history cannot be deleted —
-     * the FK restricts and this responds 409 with the usage count so the UI
-     * can explain it. Editing stays possible for future generations.
+     * Deleting is always possible: schedule entries carry baked snapshots of
+     * the course's display fields (resolved at their write time), so existing
+     * schedules keep rendering their history — the entry's external_course_id
+     * simply dangles, with no FK to restrict the delete.
      */
     public function destroy($id)
     {
         $course = ExternalCourse::findOrFail($id);
-
-        $sessionCount = ScheduleEntry::where('external_course_id', $course->id)->count();
-        if ($sessionCount > 0) {
-            return response()->json([
-                'status' => false,
-                'message' => "Cannot delete this external course: {$sessionCount} schedule session(s) still reference it. Schedules keep their history, so the course stays available for editing and future generations.",
-                'blocked_ids' => [$course->id],
-                'errors' => ['references' => [$course->id => $sessionCount]],
-            ], 409);
-        }
 
         $course->delete();
 
@@ -106,23 +96,32 @@ class ExternalCourseController extends Controller
 
     private function courseAttributes(StoreExternalCourseRequest $request): array
     {
+        $labGroups = (int) $request->input('lab_groups');
+        $lectureGroups = (int) $request->input('lecture_groups');
+
         return [
             'code' => $request->input('code'),
             'name_en' => $request->input('name_en'),
             'name_ar' => $request->input('name_ar'),
             'requesting_entity_en' => $request->input('requesting_entity_en'),
             'requesting_entity_ar' => $request->input('requesting_entity_ar'),
-            'lab_groups' => (int) $request->input('lab_groups'),
-            'lab_students_per_group' => $request->input('lab_students_per_group'),
-            'lecture_groups' => (int) $request->input('lecture_groups'),
-            'lecture_students_per_group' => $request->input('lecture_students_per_group'),
-            'lecture_venue' => $request->input('lecture_venue'),
+            'lab_groups' => $labGroups,
+            'lab_students_per_group' => $labGroups > 0 ? $request->input('lab_students_per_group') : null,
+            'lecture_groups' => $lectureGroups,
+            'lecture_students_per_group' => $lectureGroups > 0 ? $request->input('lecture_students_per_group') : null,
+            'lecture_venue' => $lectureGroups > 0 ? $request->input('lecture_venue') : null,
 
-            // Scheduling configuration; absent hours mean the historical 2h.
-            'lab_session_hours' => (int) ($request->input('lab_session_hours') ?? 2),
-            'lecture_session_hours' => (int) ($request->input('lecture_session_hours') ?? 2),
-            'lab_time_slots' => $request->input('lab_time_slots'),
-            'lecture_time_slots' => $request->input('lecture_time_slots'),
+            // Scheduling configuration. Present components default absent
+            // hours to the historical 2h; an absent component stores null —
+            // never a leftover value that would block removing it later.
+            'lab_session_hours' => $labGroups > 0 ? (int) ($request->input('lab_session_hours') ?? 2) : null,
+            'lecture_session_hours' => $lectureGroups > 0 ? (int) ($request->input('lecture_session_hours') ?? 2) : null,
+            'lab_time_slots' => $labGroups > 0 ? $request->input('lab_time_slots') : null,
+            'lecture_time_slots' => $lectureGroups > 0 ? $request->input('lecture_time_slots') : null,
+
+            // Reserved-period override: only this course's assigned staff may
+            // sit in the reserved period (see the engine's block flag).
+            'allow_reserved_period' => $request->boolean('allow_reserved_period'),
         ];
     }
 

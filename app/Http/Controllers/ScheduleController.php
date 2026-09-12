@@ -4,17 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreScheduleRequest;
 use App\Http\Resources\ScheduleResource;
-use App\Models\Hall;
-use App\Models\Lap;
-use App\Models\Lecturer;
 use App\Models\Schedule;
+use App\Models\ScheduleBlocker;
+use App\Services\ScheduleEntryFactory;
 use App\Traits\ApiResponseTrait;
+use App\Traits\ValidatesBlockers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ScheduleController extends Controller
 {
     use ApiResponseTrait;
+    use ValidatesBlockers;
 
     public function index()
     {
@@ -38,10 +39,14 @@ class ScheduleController extends Controller
 
             $this->createEntriesWithSnapshots($schedule, $request->schedule);
 
+            // Bake the blockers the generation actually enforced — later
+            // staff-page edits never rewrite the schedule's past.
+            $this->createScheduleBlockers($schedule, (array) $request->input('blockers'));
+
             return $schedule;
         });
 
-        $schedule = Schedule::with(['entries.lecturer.academicDegree', 'entries.externalCourse'])
+        $schedule = Schedule::with(['entries.lecturer.academicDegree', 'entries.externalCourse', 'blockers'])
             ->findOrFail($schedule->id);
 
         return $this->ApiResponse(
@@ -53,7 +58,7 @@ class ScheduleController extends Controller
 
     public function generationContext($id)
     {
-        $schedule = Schedule::with(['entries', 'entries.externalCourse:id,lecture_venue'])
+        $schedule = Schedule::with(['entries', 'entries.externalCourse:id,lecture_venue', 'blockers'])
             ->findOrFail($id);
 
         return response()->json([
@@ -61,6 +66,18 @@ class ScheduleController extends Controller
                 'id' => $schedule->id,
                 'available_hall_ids' => $schedule->available_hall_ids,
                 'available_lab_ids' => $schedule->available_lab_ids,
+                // Baked blockers: the engine's editor validation enforces
+                // these (not the live staff templates) so a change on the
+                // staff page never moves this schedule's goalposts.
+                'blockers' => $schedule->blockers->map(function ($blocker) {
+                    return [
+                        'lecturer_id' => $blocker->lecturer_id,
+                        'day' => strtolower($blocker->day),
+                        'start_time' => \Str::substr($blocker->startTime, 0, 5),
+                        'end_time' => \Str::substr($blocker->endTime, 0, 5),
+                        'label' => $blocker->label,
+                    ];
+                })->values(),
                 'entries' => $schedule->entries->map(function ($entry) {
                     return [
                         'id' => $entry->id,
@@ -69,7 +86,13 @@ class ScheduleController extends Controller
                         // "ours"|"external" on external entries so the engine
                         // can tell a roomless external-venue lecture from a
                         // hall booking; null for local course entries.
-                        'lecture_venue' => $entry->externalCourse?->lecture_venue,
+                        // Baked snapshot first, live relation as the legacy
+                        // fallback — a deleted course must not break history.
+                        'lecture_venue' => $entry->external_course_venue
+                            ?? $entry->externalCourse?->lecture_venue,
+                        'external_course_code' => $entry->external_course_code,
+                        'external_course_name_en' => $entry->external_course_name_en,
+                        'external_course_name_ar' => $entry->external_course_name_ar,
                         'course_ids' => $entry->course_ids,
                         'session_type' => $entry->session_type,
                         'group_number' => $entry->group_number,
@@ -97,6 +120,7 @@ class ScheduleController extends Controller
             'entries.hall',
             'entries.lecturer.academicDegree',
             'entries.externalCourse',
+            'blockers',
         ])->findOrFail($id);
 
         $staffId = $request->query('staff_id');
@@ -191,6 +215,57 @@ class ScheduleController extends Controller
 
     }
 
+    /**
+     * Add a blocker to THIS schedule only — hand-placed from the editor's
+     * staff-filtered view. It never touches the staff member's template
+     * blockers, and it hard-blocks editor moves/swaps plus renders on the
+     * person's exports from here on.
+     */
+    public function storeBlocker(Request $request, $scheduleId)
+    {
+        $schedule = Schedule::findOrFail($scheduleId);
+
+        $validated = $request->validate([
+            'lecturer_id' => ['required', 'integer', 'exists:lecturers,id'],
+            'day' => ['required', 'string'],
+            'startTime' => ['required', 'string'],
+            'endTime' => ['required', 'string'],
+            'label' => ['required', 'string', 'max:191'],
+        ]);
+
+        $this->validateBlockers([$validated], 'blocker');
+
+        $duplicate = $schedule->blockers()
+            ->where('lecturer_id', $validated['lecturer_id'])
+            ->where('day', strtolower($validated['day']))
+            ->where('startTime', $validated['startTime'])
+            ->where('endTime', $validated['endTime'])
+            ->exists();
+
+        if ($duplicate) {
+            return $this->ApiResponse(null, 'This slot is already blocked on this schedule.', 409);
+        }
+
+        $blocker = $schedule->blockers()->create([
+            ...$validated,
+            'day' => strtolower($validated['day']),
+        ]);
+
+        return $this->ApiResponse($blocker->only(['id', 'lecturer_id', 'day', 'startTime', 'endTime', 'label']), 'schedule blocker added successfully', 201);
+    }
+
+    /**
+     * Remove a baked blocker from this schedule. The staff member's
+     * template blockers are untouched.
+     */
+    public function destroyBlocker($scheduleId, $blockerId)
+    {
+        $blocker = ScheduleBlocker::where('schedule_id', $scheduleId)->findOrFail($blockerId);
+        $blocker->delete();
+
+        return $this->ApiResponse(null, 'schedule blocker removed successfully', 200);
+    }
+
     private function reservedPeriodAttributes(?array $period): array
     {
         return [
@@ -204,6 +279,30 @@ class ScheduleController extends Controller
     }
 
     /**
+     * Bake blockers carried by the generation request (the engine sends the
+     * staff templates it actually enforced; the editor never sends any
+     * here — its blockers go through the dedicated endpoints).
+     */
+    private function createScheduleBlockers(Schedule $schedule, array $blockers): void
+    {
+        if ($blockers === []) {
+            return;
+        }
+
+        $this->validateBlockers($blockers, 'blockers');
+
+        foreach ($blockers as $blocker) {
+            $schedule->blockers()->create([
+                'lecturer_id' => $blocker['lecturer_id'],
+                'day' => strtolower($blocker['day']),
+                'startTime' => $blocker['startTime'],
+                'endTime' => $blocker['endTime'],
+                'label' => $blocker['label'],
+            ]);
+        }
+    }
+
+    /**
      * Create the schedule's entries, recording the room and lecturer display
      * names as they are right now. Schedule history renders from these
      * snapshots, so later renames or deletions never rewrite the past.
@@ -212,46 +311,17 @@ class ScheduleController extends Controller
      * academic, department, or staff data: their lecturer is nullable (no
      * snapshot when absent) and their room columns follow the component
      * rules — labs book a lab, lectures a hall, external-venue lectures
-     * neither. Identity lives in external_course_id; the course's own
-     * display data always comes from its live row, which the restricting FK
-     * keeps in place as long as history refers to it.
+     * neither. The external course's own display fields are baked the same
+     * way, so history survives edits to — or deletion of — the course.
      */
     private function createEntriesWithSnapshots(Schedule $schedule, array $entries): void
     {
-        $hallNames = Hall::whereIn('id', collect($entries)->pluck('hall_id')->filter())
-            ->pluck('name', 'id');
-        $lapNames = Lap::whereIn('id', collect($entries)->pluck('lab_id')->filter())
-            ->pluck('name', 'id');
-        $lecturers = Lecturer::whereIn('id', collect($entries)->pluck('lecturer_id')->filter())
-            ->get(['id', 'name', 'name_ar'])
-            ->keyBy('id');
+        $sources = ScheduleEntryFactory::nameSources($entries);
 
         foreach ($entries as $entry) {
-            $isExternal = ($entry['entry_kind'] ?? 'course') === 'external';
-            $lecturer = $lecturers->get($entry['lecturer_id'] ?? null);
-
-            $schedule->entries()->create([
-                'entry_kind' => $isExternal ? 'external' : 'course',
-                'external_course_id' => $isExternal ? $entry['external_course_id'] : null,
-                'course_ids' => $entry['course_ids'] ?? [],
-                'session_type' => $entry['session_type'],
-                'group_number' => $entry['group_info']['group_number'],
-                'total_groups' => $entry['group_info']['total_groups'],
-                'hall_id' => $entry['hall_id'] ?? null,
-                'hall_name' => $hallNames[$entry['hall_id'] ?? null] ?? null,
-                'lap_id' => $entry['lab_id'] ?? null,     // JSON field is lab_id, the DB column is lap_id
-                'lap_name' => $lapNames[$entry['lab_id'] ?? null] ?? null,
-                'lecturer_id' => $entry['lecturer_id'] ?? null,
-                'lecturer_name' => $lecturer?->name,
-                'lecturer_name_ar' => $lecturer?->name_ar,
-                'Day' => $entry['time_slot']['day'],
-                'startTime' => $entry['time_slot']['start_time'],
-                'endTime' => $entry['time_slot']['end_time'],
-                'student_count' => $entry['student_count'],
-                'academic_ids' => $entry['academic_ids'] ?? [],
-                'academic_levels' => $entry['academic_levels'] ?? [],
-                'department_ids' => $entry['department_ids'] ?? [],
-            ]);
+            $schedule->entries()->create(
+                ScheduleEntryFactory::attributes($entry, $sources)
+            );
         }
     }
 }

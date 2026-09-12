@@ -82,16 +82,19 @@ class ExportController extends Controller
 
             }
 
-            // External entries render from their own course row; local
+            // External entries render from their baked snapshot (the course's
+            // fields as they were at write time — survives edits and
+            // deletions); the live relation is the legacy fallback. Local
             // entries fall back to the first course of course_ids (the old
             // single course relation is gone).
             if (($s->entry_kind ?? 'course') === 'external') {
-                $external = $s->externalCourse;
-                $code = $external?->code;
+                $code = $s->external_course_code ?? $s->externalCourse?->code;
+                $nameEn = $s->external_course_name_en ?? $s->externalCourse?->name_en;
+                $nameAr = $s->external_course_name_ar ?? $s->externalCourse?->name_ar;
                 if ($locale === 'en') {
-                    $name = 'External — '.($external?->name_en ?? '').($code ? ' ('.$code.' )' : '');
+                    $name = 'External — '.($nameEn ?? '').($code ? ' ('.$code.' )' : '');
                 } else {
-                    $name = '( '.$code.' )  '.($external?->name_ar ?? '');
+                    $name = '( '.$code.' )  '.($nameAr ?? '');
                 }
                 $courseKey = 'external_'.$s->external_course_id;
             } else {

@@ -31,6 +31,10 @@ class StoreExternalCourseRequest extends FormRequest
             'lecture_students_per_group' => 'nullable|integer|min:1',
             'lecture_venue' => ['nullable', Rule::in(['ours', 'external'])],
 
+            // Reserved-period override: only this course's sessions (its
+            // assigned staff) may sit in the reserved period.
+            'allow_reserved_period' => 'nullable|boolean',
+
             // Scheduling configuration: per-session span (1h packs two groups
             // into one 2h slot) and the allowed 2h grid slots (null/absent =
             // anywhere). Shape cross-checks live in withValidator.
@@ -110,14 +114,10 @@ class StoreExternalCourseRequest extends FormRequest
 
             $this->validateStaffDistribution($validator, $labGroups, $lectureGroups);
 
-            foreach (['lab' => $labGroups, 'lecture' => $lectureGroups] as $component => $groups) {
-                if ($this->filled("{$component}_session_hours") && $groups === 0) {
-                    $validator->errors()->add(
-                        "{$component}_session_hours",
-                        ucfirst($component).' session hours are not allowed when the course has no '.$component.' groups.'
-                    );
-                }
-            }
+            // Session hours are deliberately NOT rejected when their component
+            // is absent: a previous save stores the default 2h, and rejecting
+            // the leftover value would make removing the component impossible.
+            // The controller normalizes them to null instead.
 
             $this->validateTimeSlots($validator, 'lab_time_slots', $labGroups > 0, 'lab');
             $this->validateTimeSlots($validator, 'lecture_time_slots', $lectureGroups > 0, 'lecture');

@@ -32,6 +32,10 @@ class ExternalCourseResource extends JsonResource
             'lecture_students_per_group' => $this->lecture_students_per_group,
             'lecture_venue' => $this->lecture_venue,
 
+            // Reserved-period override: only this course's sessions (its
+            // assigned staff) may sit in the reserved period.
+            'allow_reserved_period' => (bool) $this->allow_reserved_period,
+
             // Scheduling configuration requested by the outside faculty:
             // per-session span in hours and the allowed 2h grid slots
             // (null = anywhere on the grid).

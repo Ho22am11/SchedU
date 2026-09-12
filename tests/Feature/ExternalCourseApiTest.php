@@ -267,7 +267,9 @@ class ExternalCourseApiTest extends TestCase
         $created->assertStatus(201);
         $data = $created->json('data');
         $this->assertSame(1, $data['lab_session_hours']);
-        $this->assertSame(2, $data['lecture_session_hours']);
+        // An absent component stores null — never a phantom default that
+        // would block removing the component later.
+        $this->assertNull($data['lecture_session_hours']);
         // MySQL's JSON column normalizes object key order — compare loosely.
         $this->assertEquals($slots, $data['lab_time_slots']);
 
@@ -293,28 +295,43 @@ class ExternalCourseApiTest extends TestCase
         $this->assertNull($course->lab_time_slots);
     }
 
-    public function test_scheduling_config_is_rejected_without_its_component(): void
+    public function test_session_hours_without_their_component_are_normalized(): void
     {
-        // Lab config on a lecture-only course.
-        $labConfig = $this->postJson('/api/external-courses', $this->basePayload([
+        // A leftover hours value must not block removing the component (the
+        // removal-blocking validation this suite used to assert): the course
+        // is accepted and the orphaned hours are stored as null.
+        $course = $this->postJson('/api/external-courses', $this->basePayload([
+            'lab_groups' => 0,
+            'lab_students_per_group' => null,
             'lab_session_hours' => 1,
+        ]));
+        $course->assertStatus(201);
+        $this->assertNull($course->json('data.lab_session_hours'));
+
+        $stored = ExternalCourse::findOrFail($course->json('data.id'));
+        $this->assertNull($stored->lab_session_hours);
+    }
+
+    public function test_time_slots_are_rejected_without_their_component(): void
+    {
+        // Lab slots on a lecture-only course.
+        $labSlots = $this->postJson('/api/external-courses', $this->basePayload([
             'lab_time_slots' => [['day' => 'monday', 'start_time' => '09:00', 'end_time' => '11:00']],
         ]));
-        $labConfig->assertStatus(422);
-        $labConfig->assertJsonValidationErrors(['lab_time_slots', 'lab_session_hours']);
+        $labSlots->assertStatus(422);
+        $labSlots->assertJsonValidationErrors(['lab_time_slots']);
 
-        // Lecture config on a lab-only course.
-        $lectureConfig = $this->postJson('/api/external-courses', $this->basePayload([
+        // Lecture slots on a lab-only course.
+        $lectureSlots = $this->postJson('/api/external-courses', $this->basePayload([
             'lecture_groups' => 0,
             'lecture_students_per_group' => null,
             'lecture_venue' => null,
             'lab_groups' => 2,
             'lab_students_per_group' => 12,
-            'lecture_session_hours' => 1,
             'lecture_time_slots' => [['day' => 'monday', 'start_time' => '09:00', 'end_time' => '11:00']],
         ]));
-        $lectureConfig->assertStatus(422);
-        $lectureConfig->assertJsonValidationErrors(['lecture_time_slots', 'lecture_session_hours']);
+        $lectureSlots->assertStatus(422);
+        $lectureSlots->assertJsonValidationErrors(['lecture_time_slots']);
     }
 
     public function test_time_slots_must_be_whole_on_grid_periods_without_duplicates(): void
@@ -418,14 +435,20 @@ class ExternalCourseApiTest extends TestCase
         $this->assertSame([], $course->eligibleLabs()->pluck('laps.id')->all());
     }
 
-    public function test_delete_is_blocked_while_schedule_history_references_the_course(): void
+    public function test_delete_works_and_history_keeps_the_baked_snapshot(): void
     {
         $course = ExternalCourse::create($this->courseRow());
         $schedule = Schedule::create(['nameEn' => 'S', 'nameAr' => 'S']);
-        ScheduleEntry::create([
+        $entry = ScheduleEntry::create([
             'schedule_id' => $schedule->id,
             'entry_kind' => 'external',
             'external_course_id' => $course->id,
+            'external_course_code' => $course->code,
+            'external_course_name_en' => $course->name_en,
+            'external_course_name_ar' => $course->name_ar,
+            'external_course_entity_en' => $course->requesting_entity_en,
+            'external_course_entity_ar' => $course->requesting_entity_ar,
+            'external_course_venue' => $course->lecture_venue,
             'course_ids' => [],
             'session_type' => 'lab',
             'group_number' => 1,
@@ -440,15 +463,57 @@ class ExternalCourseApiTest extends TestCase
             'department_ids' => [],
         ]);
 
+        // Deletion is never blocked: entries bake the course's display data,
+        // so history renders regardless, under the dangling id.
         $this->deleteJson("/api/external-courses/{$course->id}")
-            ->assertStatus(409);
+            ->assertStatus(200);
+        $this->assertDatabaseMissing('external_courses', ['id' => $course->id]);
+        $this->assertDatabaseHas('schedule_entries', ['id' => $entry->id]);
 
-        $this->assertDatabaseHas('external_courses', ['id' => $course->id]);
+        $entry->refresh();
+        $this->assertSame($course->id, $entry->external_course_id);
+        $this->assertSame('Row Course', $entry->external_course_name_en);
+        $this->assertSame('EXT-ROW', $entry->external_course_code);
+    }
 
-        // An unreferenced course deletes fine.
-        $other = ExternalCourse::create($this->courseRow());
-        $this->deleteJson("/api/external-courses/{$other->id}")->assertStatus(200);
-        $this->assertDatabaseMissing('external_courses', ['id' => $other->id]);
+    public function test_entry_resource_renders_the_baked_snapshot_after_course_edit(): void
+    {
+        $course = ExternalCourse::create($this->courseRow());
+        $schedule = Schedule::create(['nameEn' => 'S', 'nameAr' => 'S']);
+        $entry = ScheduleEntry::create([
+            'schedule_id' => $schedule->id,
+            'entry_kind' => 'external',
+            'external_course_id' => $course->id,
+            'external_course_code' => $course->code,
+            'external_course_name_en' => $course->name_en,
+            'external_course_name_ar' => $course->name_ar,
+            'external_course_entity_en' => $course->requesting_entity_en,
+            'external_course_entity_ar' => $course->requesting_entity_ar,
+            'external_course_venue' => $course->lecture_venue,
+            'course_ids' => [],
+            'session_type' => 'lab',
+            'group_number' => 1,
+            'total_groups' => 1,
+            'lap_id' => $this->lap->id,
+            'Day' => 'monday',
+            'startTime' => '09:00',
+            'endTime' => '11:00',
+            'student_count' => 10,
+            'academic_ids' => [],
+            'academic_levels' => [],
+            'department_ids' => [],
+        ]);
+
+        // A later rename must not rewrite schedule history.
+        $course->update(['name_en' => 'Renamed After Generation']);
+
+        $response = $this->getJson("/api/schedules/{$schedule->id}");
+        $response->assertStatus(200);
+        $rendered = collect($response->json('data.entries'))
+            ->first(fn ($e) => $e['id'] === $entry->id);
+
+        $this->assertSame('Row Course', $rendered['external_course']['nameEn']);
+        $this->assertSame('Row Course', $rendered['external_course']['name']);
     }
 
     private function courseRow(): array

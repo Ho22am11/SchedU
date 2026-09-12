@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Academic;
 use App\Models\ExternalCourseStaff;
 use App\Models\Lecturer;
+use App\Models\ScheduleBlocker;
 use App\Models\ScheduleEntry;
 use Closure;
 use Illuminate\Http\JsonResponse;
@@ -83,10 +84,12 @@ class DeletionGuard
     }
 
     /**
-     * Lecturers are referenced by scheduled sessions and by external course
-     * staff distributions (the FK there cascades, like lecturer_assignments).
-     * Count both so an unforced delete surfaces the usage before the cascade
-     * silently thins an external course's distribution.
+     * Lecturers are referenced by scheduled sessions, by external course
+     * staff distributions (the FK there cascades, like lecturer_assignments),
+     * and by blockers baked into schedules (whose FK cascades too). Count
+     * all three so an unforced delete surfaces the usage before a cascade
+     * silently thins an external course's distribution or erases a baked
+     * blocker from schedule history.
      *
      * @return array<int, int>
      */
@@ -98,6 +101,14 @@ class DeletionGuard
             ->selectRaw('staff_id, count(*) as usage_count')
             ->groupBy('staff_id')
             ->pluck('usage_count', 'staff_id')
+            ->each(function (int $count, int $id) use (&$counts) {
+                $counts[$id] = ($counts[$id] ?? 0) + $count;
+            });
+
+        ScheduleBlocker::whereIn('lecturer_id', $ids)
+            ->selectRaw('lecturer_id, count(*) as usage_count')
+            ->groupBy('lecturer_id')
+            ->pluck('usage_count', 'lecturer_id')
             ->each(function (int $count, int $id) use (&$counts) {
                 $counts[$id] = ($counts[$id] ?? 0) + $count;
             });

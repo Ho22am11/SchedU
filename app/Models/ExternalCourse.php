@@ -20,6 +20,7 @@ class ExternalCourse extends Model
         'lecture_session_hours' => 'integer',
         'lab_time_slots' => 'array',
         'lecture_time_slots' => 'array',
+        'allow_reserved_period' => 'boolean',
     ];
 
     /**

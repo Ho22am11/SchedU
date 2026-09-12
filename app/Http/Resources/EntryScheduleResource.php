@@ -75,29 +75,37 @@ class EntryScheduleResource extends JsonResource
     /**
      * The external course behind the entry: display labels in both locales
      * plus the venue so the UI can render "External venue" for lectures the
-     * outside faculty hosts. The restricting FK keeps the row alive as long
-     * as schedule history refers to it.
+     * outside faculty hosts.
+     *
+     * Renders from the entry's BAKED snapshot, so editing or deleting the
+     * course never rewrites schedule history. The live relation is only the
+     * legacy fallback for rows written before snapshots existed.
      */
     private function externalCourseSummary(string $locale): ?array
     {
         $course = $this->externalCourse;
 
-        if ($course === null) {
+        $code = $this->external_course_code ?? $course?->code;
+        $nameEn = $this->external_course_name_en ?? $course?->name_en;
+        $nameAr = $this->external_course_name_ar ?? $course?->name_ar;
+        $entityEn = $this->external_course_entity_en ?? $course?->requesting_entity_en;
+        $entityAr = $this->external_course_entity_ar ?? $course?->requesting_entity_ar;
+        $venue = $this->external_course_venue ?? $course?->lecture_venue;
+
+        if ($nameEn === null && $nameAr === null) {
             return null;
         }
 
         return [
-            'id' => $course->id,
-            'code' => $course->code,
-            'name' => $locale === 'ar' ? $course->name_ar : $course->name_en,
-            'nameEn' => $course->name_en,
-            'nameAr' => $course->name_ar,
-            'requesting_entity' => $locale === 'ar'
-                ? $course->requesting_entity_ar
-                : $course->requesting_entity_en,
-            'requesting_entity_en' => $course->requesting_entity_en,
-            'requesting_entity_ar' => $course->requesting_entity_ar,
-            'lecture_venue' => $course->lecture_venue,
+            'id' => $this->external_course_id,
+            'code' => $code,
+            'name' => $locale === 'ar' ? $nameAr : $nameEn,
+            'nameEn' => $nameEn,
+            'nameAr' => $nameAr,
+            'requesting_entity' => $locale === 'ar' ? $entityAr : $entityEn,
+            'requesting_entity_en' => $entityEn,
+            'requesting_entity_ar' => $entityAr,
+            'lecture_venue' => $venue,
         ];
     }
 

@@ -8,14 +8,12 @@ use App\Models\Department;
 use App\Models\Hall;
 use App\Models\Lecturer;
 use App\Models\Schedule;
+use App\Models\ScheduleBlocker;
 use App\Models\ScheduleEntry;
-use App\Models\StaffBlocker;
 use App\Services\ScheduleWorkbookExporter;
 use Illuminate\Http\Request;
 use Mpdf\Mpdf;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ScheduleExportController extends Controller
@@ -53,6 +51,12 @@ class ScheduleExportController extends Controller
                 'id',
                 'entry_kind',
                 'external_course_id',
+                'external_course_code',
+                'external_course_name_en',
+                'external_course_name_ar',
+                'external_course_entity_en',
+                'external_course_entity_ar',
+                'external_course_venue',
                 'course_ids',
                 'lecturer_id',
                 'hall_id',
@@ -106,6 +110,24 @@ class ScheduleExportController extends Controller
             $row['lecturer'] = $row['lecturer'] ?? [];
             $row['lecturer']['name'] = $row['lecturer_name'] ?? $row['lecturer']['name'] ?? null;
             $row['lecturer']['name_ar'] = $row['lecturer_name_ar'] ?? $row['lecturer']['name_ar'] ?? null;
+
+            // Baked external-course identity: reconstruct the summary from
+            // the snapshots so exports survive course edits and deletions.
+            if (($row['entry_kind'] ?? 'course') === 'external') {
+                $hasSnapshot = $row['external_course_name_en'] !== null
+                    || $row['external_course_name_ar'] !== null;
+                if ($hasSnapshot) {
+                    $row['external_course'] = [
+                        'id' => $row['external_course_id'],
+                        'code' => $row['external_course_code'],
+                        'name_en' => $row['external_course_name_en'],
+                        'name_ar' => $row['external_course_name_ar'],
+                        'requesting_entity_en' => $row['external_course_entity_en'],
+                        'requesting_entity_ar' => $row['external_course_entity_ar'],
+                        'lecture_venue' => $row['external_course_venue'],
+                    ];
+                }
+            }
         }
         unset($row);
 
@@ -384,7 +406,7 @@ class ScheduleExportController extends Controller
         if (! empty($filters['academic_list_id'])) {
             $academic = \App\Models\Academic::find($filters['academic_list_id']);
             if ($academic) {
-                $filterParts[] = 'القائمة الأكاديمية: '.($academic->name_ar ?? $academic->name);
+                $filterParts[] = 'اللائحة الأكاديمية: '.($academic->name_ar ?? $academic->name);
             }
         }
 
@@ -404,49 +426,11 @@ class ScheduleExportController extends Controller
         return empty($filterParts) ? '' : implode(' - ', $filterParts);
     }
 
-    // Calculate the data needed for the metadata sub table
-    private function calculateMetadata($entries)
-    {
-        $uniqueCourses = [];
-        $uniqueRooms = [];
-        $uniqueStaff = [];
-
-        foreach ($entries as $entry) {
-            // Count unique courses; external courses count as subjects too.
-            if (! empty($entry['course_ids']) && is_array($entry['course_ids'])) {
-                foreach ($entry['course_ids'] as $courseId) {
-                    $uniqueCourses[$courseId] = true;
-                }
-            }
-            if (! empty($entry['external_course_id'])) {
-                $uniqueCourses['external_'.$entry['external_course_id']] = true;
-            }
-
-            // Count unique rooms (halls and labs)
-            if (! empty($entry['hall']['id'])) {
-                $uniqueRooms['hall_'.$entry['hall']['id']] = true;
-            }
-            if (! empty($entry['lap']['id'])) {
-                $uniqueRooms['lab_'.$entry['lap']['id']] = true;
-            }
-
-            // Count unique staff
-            if (! empty($entry['lecturer']['id'])) {
-                $uniqueStaff[$entry['lecturer']['id']] = true;
-            }
-        }
-
-        return [
-            'total_sessions' => count($entries),
-            'total_courses' => count($uniqueCourses),
-            'total_rooms' => count($uniqueRooms),
-            'total_staff' => count($uniqueStaff),
-        ];
-    }
-
     // دالة لبناء الجدول من البيانات
     private function buildTable($entries, $exportType = 'pdf', ?array $reservedPeriod = null, array $staffBlockers = [])
     {
+        // الجمعة مستبعدة من التصدير كلياً: أي كتل أو حجوزات أو فترة محجوزة
+        // تقع فيها تُتجاهل.
         $daysMap = [
             'saturday' => 'السبت',
             'sunday' => 'الأحد',
@@ -454,7 +438,6 @@ class ScheduleExportController extends Controller
             'tuesday' => 'الثلاثاء',
             'wednesday' => 'الأربعاء',
             'thursday' => 'الخميس',
-            'friday' => 'الجمعة',
         ];
 
         // إنشاء time slots مسبقا
@@ -465,10 +448,11 @@ class ScheduleExportController extends Controller
             return $start.'-'.$end;
         }, range(9, 18, 2));
 
-        // تهيئة الجدول باستخدام array_fill
+        // تهيئة الجدول: كل خلية (يوم، فترة) تحمل قائمة كتل — كل كتلة في خلية
+        // مستقلة تحتها، واليوم يتمدد على عدة صفوف في العرض.
         $table = array_fill_keys(
             array_values($daysMap),
-            array_fill_keys($timeSlots, '')
+            array_fill_keys($timeSlots, [])
         );
 
         foreach ($entries as $entry) {
@@ -519,21 +503,10 @@ class ScheduleExportController extends Controller
                     $courseKey = $courseModels->pluck('code')->implode('-');
                 }
 
-                if (empty($table[$dayAr][$slot])) {
-                    $table[$dayAr][$slot] = [
-                        'html' => [$entryContent],
-                        'course_key' => $courseKey,
-                    ];
-                } else {
-                    // التعديل هنا: استبدال الخط بكلمة "أو"
-                    if ($exportType === 'pdf') {
-                        $separator = '<div style="text-align:center; font-weight:bold; margin:5px 0;">________________________</br></div>';
-                    } else {
-                        $separator = "\n────────────\n";
-                    }
-
-                    $table[$dayAr][$slot]['html'][] = $separator.$entryContent;
-                }
+                $table[$dayAr][$slot][] = [
+                    'html' => [$entryContent],
+                    'course_key' => $courseKey,
+                ];
             }
         }
 
@@ -545,12 +518,12 @@ class ScheduleExportController extends Controller
             $blockerDay = $daysMap[strtolower($blocker['day'])] ?? null;
             $blockerSlot = $blocker['startTime'].'-'.$blocker['endTime'];
 
-            if ($blockerDay === null || ! isset($table[$blockerDay][$blockerSlot]) || $table[$blockerDay][$blockerSlot] !== '') {
+            if ($blockerDay === null || ! isset($table[$blockerDay][$blockerSlot]) || $table[$blockerDay][$blockerSlot] !== []) {
                 continue;
             }
 
             $label = (string) ($blocker['label'] ?? '');
-            $table[$blockerDay][$blockerSlot] = [
+            $table[$blockerDay][$blockerSlot][] = [
                 'html' => [$exportType === 'pdf'
                     ? "<div style='font-weight:bold; font-size:13px;'>".htmlspecialchars($label, ENT_QUOTES, 'UTF-8').'</div>'
                     : $label],
@@ -570,10 +543,11 @@ class ScheduleExportController extends Controller
         $reservedSlot = $reservedPeriod['start_time'].'-'.$reservedPeriod['end_time'];
 
         if ($reservedDay && isset($table[$reservedDay][$reservedSlot])) {
-            $table[$reservedDay][$reservedSlot] = [
+            // الفترة المحجوزة تحل محل أي كتل أخرى في الخلية.
+            $table[$reservedDay][$reservedSlot] = [[
                 'html' => [$reservedPeriod['label_ar']],
                 'is_reserved' => true,
-            ];
+            ]];
         }
 
         return [
@@ -783,14 +757,20 @@ class ScheduleExportController extends Controller
             $entries,
             'pdf',
             $reservedPeriod,
-            $this->staffBlockersFor($filters['staff_id'] ?? null)
+            $this->scheduleBlockersFor($scheduleId, $filters['staff_id'] ?? null)
         );
 
         // Build filter string
         $filterString = $this->buildFilterHeaderString($filters);
+        $isMemberSchedule = ! empty($filters['staff_id']);
+        if ($isMemberSchedule) {
+            $filterString .= ($filterString === '' ? '' : ' - ').$this->hoursLabel($entries);
+        }
 
         $schedule = Schedule::select('nameAr')->find($scheduleId);
         $title = $schedule ? $schedule->nameAr : 'الجدول '.$scheduleId;
+
+        $memberDepartmentId = $this->memberDepartmentId($filters['staff_id'] ?? null);
 
         $mpdf = new Mpdf([
             'mode' => 'utf-8',
@@ -811,8 +791,7 @@ class ScheduleExportController extends Controller
             $data['timeSlots'],
             $data['days'],
             $filterString,
-            $entries,
-            $this->signatureTitlesFor(! empty($filters['staff_id']))
+            $this->signatureRowsFor($isMemberSchedule, $memberDepartmentId)
         ));
 
         $filename = $this->generateFileName($scheduleId, $filters, 'pdf');
@@ -847,194 +826,31 @@ class ScheduleExportController extends Controller
             $entries,
             'excel',
             $reservedPeriod,
-            $this->staffBlockersFor($filters['staff_id'] ?? null)
+            $this->scheduleBlockersFor($scheduleId, $filters['staff_id'] ?? null)
         );
 
-        $spreadsheet = new Spreadsheet;
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setRightToLeft(true);
+        // Build filter string
+        $filterString = $this->buildFilterHeaderString($filters);
+        $isMemberSchedule = ! empty($filters['staff_id']);
+        if ($isMemberSchedule) {
+            $filterString .= ($filterString === '' ? '' : ' - ').$this->hoursLabel($entries);
+        }
 
         $schedule = Schedule::select('nameAr')->find($scheduleId);
         $title = $schedule ? $schedule->nameAr : 'الجدول '.$scheduleId;
 
-        // Build filter string
-        $filterString = $this->buildFilterHeaderString($filters);
-
-        $colCount = count($data['timeSlots']) + 1;
-        $lastCol = chr(65 + $colCount - 1);
-
-        // Main title
-        $sheet->mergeCells('A1:'.$lastCol.'1');
-        $sheet->setCellValue('A1', $title);
-        $sheet->getStyle('A1')->applyFromArray([
-            'font' => ['bold' => true, 'size' => 16],
-            'alignment' => ['horizontal' => 'center'],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']],
-        ]);
-
-        // Filter header (if filters exist)
-        $headerRow = 2;
-        if (! empty($filterString)) {
-            $sheet->mergeCells('A2:'.$lastCol.'2');
-            $sheet->setCellValue('A2', $filterString);
-            $sheet->getStyle('A2')->applyFromArray([
-                'font' => ['bold' => true, 'size' => 12],
-                'alignment' => ['horizontal' => 'center'],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E8F4FD']],
-            ]);
-            $headerRow = 3; // Move table headers down
-        }
-
-        // Table headers
-        $sheet->setCellValue('A'.$headerRow, 'اليوم / الوقت');
-        $headerStyle = [
-            'font' => ['bold' => true],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E2EFDA']],
-            'alignment' => ['horizontal' => 'center'],
-        ];
-
-        $sheet->getStyle('A'.$headerRow)->applyFromArray($headerStyle);
-
-        $colIndex = 1;
-        foreach ($data['timeSlots'] as $slot) {
-            $col = chr(65 + $colIndex);
-            $sheet->setCellValue($col.$headerRow, $slot);
-            $sheet->getStyle($col.$headerRow)->applyFromArray($headerStyle);
-            $colIndex++;
-        }
-
-        // Fill data with coloring
+        // Same sheet layout as the bulk workbook — one renderer for both paths.
+        $spreadsheet = new Spreadsheet;
         $colorMap = [];
-        $rowIndex = $headerRow + 1; // Start after headers
-
-        foreach ($data['days'] as $day) {
-            $sheet->setCellValue("A{$rowIndex}", $day);
-            $sheet->getStyle("A{$rowIndex}")->applyFromArray([
-                'font' => ['bold' => true],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFF2CC']],
-                'alignment' => ['horizontal' => 'center'],
-            ]);
-
-            $colIndex = 1;
-            foreach ($data['timeSlots'] as $slot) {
-                $col = chr(65 + $colIndex);
-                $cell = $col.$rowIndex;
-                $entry = $data['table'][$day][$slot] ?? '';
-
-                if (! empty($entry)) {
-                    $sheet->setCellValue($cell, implode("\n", $entry['html']));
-                    $sheet->getStyle($cell)->getAlignment()
-                        ->setWrapText(true)
-                        ->setVertical('center')
-                        ->setHorizontal('center');
-
-                    if (! empty($entry['is_reserved'])) {
-                        $sheet->getStyle($cell)->getFill()
-                            ->setFillType(Fill::FILL_SOLID)
-                            ->getStartColor()
-                            ->setRGB('E7E5E4');
-                        $sheet->getStyle($cell)->getFont()->setBold(true);
-                    } elseif (! empty($entry['is_blocker'])) {
-                        $sheet->getStyle($cell)->getFill()
-                            ->setFillType(Fill::FILL_SOLID)
-                            ->getStartColor()
-                            ->setRGB('FEE2E2');
-                        $sheet->getStyle($cell)->getFont()->setBold(true);
-                    } else {
-                        $courseKey = $entry['course_key'] ?? '';
-                        if (! empty($courseKey)) {
-                            $color = $this->getCourseColor($courseKey, $colorMap);
-                            $rgbColor = $this->hslToHex($color, false); // Excel needs hex without #
-
-                            $sheet->getStyle($cell)->getFill()
-                                ->setFillType(Fill::FILL_SOLID)
-                                ->getStartColor()
-                                ->setRGB($rgbColor);
-                        }
-                    }
-                }
-                $colIndex++;
-            }
-            $rowIndex++;
-        }
-
-        // Add metadata table after main schedule table
-        $metadataStartRow = $rowIndex + 2; // Leave one empty row
-        $metadata = $this->calculateMetadata($entries);
-
-        // Metadata title
-        $sheet->mergeCells('A'.$metadataStartRow.':D'.$metadataStartRow);
-        $sheet->setCellValue('A'.$metadataStartRow, 'إحصائيات الجدول');
-        $sheet->getStyle('A'.$metadataStartRow)->applyFromArray([
-            'font' => ['bold' => true, 'size' => 14],
-            'alignment' => ['horizontal' => 'center'],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']],
-        ]);
-
-        // Metadata headers
-        $metadataHeaderRow = $metadataStartRow + 1;
-        $metadataHeaders = ['إجمالي الجلسات', 'إجمالي المقررات', 'إجمالي الغرف', 'إجمالي أعضاء هيئة التدريس'];
-        $metadataValues = [$metadata['total_sessions'], $metadata['total_courses'], $metadata['total_rooms'], $metadata['total_staff']];
-
-        for ($i = 0; $i < 4; $i++) {
-            $col = chr(65 + $i); // A, B, C, D
-
-            // Header
-            $sheet->setCellValue($col.$metadataHeaderRow, $metadataHeaders[$i]);
-            $sheet->getStyle($col.$metadataHeaderRow)->applyFromArray([
-                'font' => ['bold' => true],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E2EFDA']],
-                'alignment' => ['horizontal' => 'center'],
-            ]);
-
-            // Value
-            $sheet->setCellValue($col.($metadataHeaderRow + 1), $metadataValues[$i]);
-            $sheet->getStyle($col.($metadataHeaderRow + 1))->applyFromArray([
-                'font' => ['bold' => true],
-                'alignment' => ['horizontal' => 'center'],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFFFFF']],
-            ]);
-        }
-
-        // Metadata table borders
-        $metadataTableRange = "A{$metadataStartRow}:D".($metadataHeaderRow + 1);
-        $sheet->getStyle($metadataTableRange)->getBorders()
-            ->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-
-        // Set column widths for metadata
-        foreach (['A', 'B', 'C', 'D'] as $col) {
-            $sheet->getColumnDimension($col)->setWidth(25);
-        }
-
-        // Signature block under the table (one row, right to left)
-        $workbookExporter->addSignatures(
-            $sheet,
-            $this->signatureTitlesFor(! empty($filters['staff_id'])),
-            $metadataHeaderRow + 3,
-            $colCount
+        $workbookExporter->addWorksheet(
+            $spreadsheet,
+            $title,
+            $title,
+            $filterString,
+            $data,
+            $colorMap,
+            $this->signatureRowsFor($isMemberSchedule, $this->memberDepartmentId($filters['staff_id'] ?? null))
         );
-
-        // Table formatting
-        $tableRange = "A{$headerRow}:{$lastCol}".($rowIndex - 1);
-        $sheet->getStyle($tableRange)->getBorders()
-            ->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-
-        // Column and row dimensions
-        $sheet->getColumnDimension('A')->setWidth(20);
-        foreach (range('B', $lastCol) as $col) {
-            $sheet->getColumnDimension($col)->setWidth(45);
-        }
-
-        for ($i = $headerRow + 1; $i < $rowIndex; $i++) {
-            $sheet->getRowDimension($i)->setRowHeight(120);
-        }
-
-        // Data cell alignment
-        $dataRange = 'B'.($headerRow + 1).":{$lastCol}".($rowIndex - 1);
-        $sheet->getStyle($dataRange)->getAlignment()
-            ->setWrapText(true)
-            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER)
-            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
 
         $filename = $this->generateFileName($scheduleId, $filters, 'xlsx');
         $writer = new Xlsx($spreadsheet);
@@ -1067,7 +883,7 @@ class ScheduleExportController extends Controller
         ])->findOrFail($scheduleId);
         $reservedPeriod = $schedule->reservedPeriod();
         $entries = $this->loadFilteredData($scheduleId, []);
-        $blockersByStaff = $this->blockersByStaff();
+        $blockersByStaff = $this->scheduleBlockersByStaff($scheduleId);
         $spreadsheet = new Spreadsheet;
         $colorMap = [];
 
@@ -1181,15 +997,22 @@ class ScheduleExportController extends Controller
         ?array $reservedPeriod,
         array &$colorMap
     ): void {
+        // academic_ids و academic_levels متوازيان بالفهرس (كل قائمة بمستواها،
+        // والتكرار مقصود لتعدد الدفعات الحاضرة) — الضرب الديكارتي بينهما يولّد
+        // دفعات وهمية (قائمة بمستوى لا تدرسه) وأوراقاً فارغة، لذا نضامهما.
         $pairs = [];
         foreach ($entries as $entry) {
-            foreach ($entry['academic_ids'] ?? [] as $academicId) {
-                foreach ($entry['academic_levels'] ?? [] as $academicLevel) {
-                    $pairs[(int) $academicId.':'.(int) $academicLevel] = [
-                        'academic_id' => (int) $academicId,
-                        'academic_level' => (int) $academicLevel,
-                    ];
+            $academicIds = $entry['academic_ids'] ?? [];
+            $academicLevels = $entry['academic_levels'] ?? [];
+            foreach ($academicIds as $index => $academicId) {
+                $academicLevel = $academicLevels[$index] ?? null;
+                if ($academicLevel === null) {
+                    continue;
                 }
+                $pairs[(int) $academicId.':'.(int) $academicLevel] = [
+                    'academic_id' => (int) $academicId,
+                    'academic_level' => (int) $academicLevel,
+                ];
             }
         }
 
@@ -1217,8 +1040,15 @@ class ScheduleExportController extends Controller
 
             $academicName = $academic->name_ar ?? $academic->name;
             $filteredEntries = array_values(array_filter($entries, function (array $entry) use ($pair): bool {
-                return in_array($pair['academic_id'], $entry['academic_ids'] ?? [], true)
-                    && in_array($pair['academic_level'], $entry['academic_levels'] ?? [], true);
+                // نفس محاذاة الفهرس عند التصفية: القائمة i بمستواها i فقط.
+                foreach ($entry['academic_ids'] ?? [] as $index => $academicId) {
+                    if ((int) $academicId === $pair['academic_id']
+                        && (int) ($entry['academic_levels'][$index] ?? PHP_INT_MIN) === $pair['academic_level']) {
+                        return true;
+                    }
+                }
+
+                return false;
             }));
 
             $this->addFullWorkbookSheet(
@@ -1226,7 +1056,7 @@ class ScheduleExportController extends Controller
                 $spreadsheet,
                 'لائحة - '.$academicName.' - L'.$pair['academic_level'],
                 $scheduleTitle,
-                'القائمة الأكاديمية: '.$academicName.' - المستوى: '.$pair['academic_level'],
+                'اللائحة الأكاديمية: '.$academicName.' - المستوى: '.$pair['academic_level'],
                 $filteredEntries,
                 $reservedPeriod,
                 $colorMap
@@ -1250,7 +1080,7 @@ class ScheduleExportController extends Controller
                 $query->whereIn('name', $degreeNames);
             })
             ->orderBy('name')
-            ->get(['id', 'name', 'name_ar', 'academic_id']);
+            ->get(['id', 'name', 'name_ar', 'academic_id', 'department_id']);
 
         foreach ($members as $member) {
             $degree = $member->academicDegree;
@@ -1267,12 +1097,13 @@ class ScheduleExportController extends Controller
                 $spreadsheet,
                 $categoryLabel.' - '.$memberName,
                 $scheduleTitle,
-                $categoryLabel.': '.$memberName,
+                $categoryLabel.': '.$memberName.' - '.$this->hoursLabel($filteredEntries),
                 $filteredEntries,
                 $reservedPeriod,
                 $colorMap,
                 true,
-                $blockersByStaff[$member->id] ?? []
+                $blockersByStaff[$member->id] ?? [],
+                $member->department_id === null ? null : (int) $member->department_id
             );
         }
     }
@@ -1287,7 +1118,8 @@ class ScheduleExportController extends Controller
         ?array $reservedPeriod,
         array &$colorMap,
         bool $isMemberSchedule = false,
-        array $staffBlockers = []
+        array $staffBlockers = [],
+        ?int $departmentId = null
     ): void {
         $data = $this->buildTable($entries, 'excel', $reservedPeriod, $staffBlockers);
         $workbookExporter->addWorksheet(
@@ -1296,47 +1128,119 @@ class ScheduleExportController extends Controller
             $scheduleTitle,
             $filterString,
             $data,
-            $entries,
             $colorMap,
-            $this->signatureTitlesFor($isMemberSchedule)
+            $this->signatureRowsFor($isMemberSchedule, $departmentId)
         );
     }
 
-    // عناوين خانات التوقيع: جدول العضو (معلم أو محاضر) يبدأ برئيس القسم، وغير ذلك بمنسق الجداول
-    private function signatureTitlesFor(bool $forMember): array
+    /**
+     * صفوف التوقيع: العنوان ثم مساحة توقيع فارغة ثم اسم المسؤول. جدول العضو
+     * (معلم أو محاضر) يبدأ برئيس القسم — واسمه يتحدد بقسم العضو — وغير ذلك
+     * بمنسق الجداول.
+     *
+     * @return array<int, array{title: string, name: string}>
+     */
+    private function signatureRowsFor(bool $forMember, ?int $departmentId = null): array
     {
+        $departmentHead = $this->isComputerScienceDepartment($departmentId)
+            ? 'أ.د. جمال محمد بحيري'
+            : 'أ.د. وائل عبدالقادر عوض';
+
         return $forMember
-            ? ['رئيس القسم', 'وكيل الكلية', 'عميد الكلية']
-            : ['منسق الجداول', 'وكيل الكلية', 'عميد الكلية'];
+            ? [
+                ['title' => 'رئيس القسم', 'name' => $departmentHead],
+                ['title' => 'وكيل الكلية', 'name' => 'أ.د. سامي محمد دراز'],
+                ['title' => 'عميد الكلية', 'name' => 'أ.د. وائل عبدالقادر عوض'],
+            ]
+            : [
+                ['title' => 'منسق الجداول', 'name' => 'د. أحمد محمد ربيع'],
+                ['title' => 'وكيل الكلية', 'name' => 'أ.د. سامي محمد دراز'],
+                ['title' => 'عميد الكلية', 'name' => 'أ.د. وائل عبدالقادر عوض'],
+            ];
+    }
+
+    private function memberDepartmentId($staffId): ?int
+    {
+        if (empty($staffId)) {
+            return null;
+        }
+
+        $departmentId = Lecturer::query()->whereKey($staffId)->value('department_id');
+
+        return $departmentId === null ? null : (int) $departmentId;
+    }
+
+    // قسم علوم الحاسب يُطابق بالاسم لا بالمعرف، فالمعرفات تختلف بين البيئات.
+    private function isComputerScienceDepartment(?int $departmentId): bool
+    {
+        if ($departmentId === null) {
+            return false;
+        }
+
+        static $csDepartmentId = null;
+        if ($csDepartmentId === null) {
+            $csDepartmentId = (int) (Department::query()
+                ->whereRaw('lower(name) = ?', ['computer science'])
+                ->value('id') ?? 0);
+        }
+
+        return $csDepartmentId > 0 && $departmentId === $csDepartmentId;
     }
 
     /**
-     * Blockers are read live from staff, never snapshotted — they describe
-     * the person, not the schedule (same policy as timingPreference).
+     * عدد الساعات المعتمدة للعضو: كل كتلة تُحسب بطولها الفعلي (كتلة ساعتان
+     * = ساعتان، كتلة ساعة = ساعة).
      */
-    private function staffBlockersFor($staffId): array
+    private function teachingHours(array $entries): int
+    {
+        $seconds = 0;
+        foreach ($entries as $entry) {
+            if (empty($entry['startTime']) || empty($entry['endTime'])) {
+                continue;
+            }
+            $seconds += strtotime($entry['endTime']) - strtotime($entry['startTime']);
+        }
+
+        return (int) round($seconds / 3600);
+    }
+
+    private function hoursLabel(array $entries): string
+    {
+        return 'عدد الساعات : '.$this->teachingHours($entries).' ساعة';
+    }
+
+    /**
+     * Blockers are read from the schedule's baked set, never live from the
+     * staff templates — a staff-page edit never rewrites a generated
+     * schedule's exports (same point-in-time policy as the entry name
+     * snapshots).
+     */
+    private function scheduleBlockersFor($scheduleId, $staffId): array
     {
         if (empty($staffId)) {
             return [];
         }
 
-        return StaffBlocker::query()
+        return ScheduleBlocker::query()
+            ->where('schedule_id', $scheduleId)
             ->where('lecturer_id', $staffId)
             ->get(['day', 'startTime', 'endTime', 'label'])
             ->toArray();
     }
 
     /**
-     * All blockers grouped by lecturer_id for the bulk workbook, where each
-     * per-member sheet renders only its owner's blockers.
+     * The schedule's baked blockers grouped by lecturer_id for the bulk
+     * workbook, where each per-member sheet renders only its owner's.
      *
      * @return array<int, array<int, array{day: string, startTime: string, endTime: string, label: string}>>
      */
-    private function blockersByStaff(): array
+    private function scheduleBlockersByStaff($scheduleId): array
     {
         $grouped = [];
 
-        foreach (StaffBlocker::query()->get(['lecturer_id', 'day', 'startTime', 'endTime', 'label']) as $blocker) {
+        foreach (ScheduleBlocker::query()
+            ->where('schedule_id', $scheduleId)
+            ->get(['lecturer_id', 'day', 'startTime', 'endTime', 'label']) as $blocker) {
             $grouped[$blocker->lecturer_id][] = $blocker->only(['day', 'startTime', 'endTime', 'label']);
         }
 
@@ -1352,7 +1256,7 @@ class ScheduleExportController extends Controller
     }
 
     // دالة مساعدة لإنشاء HTML لـ PDF
-    private function generatePdfHtml($title, $table, $timeSlots, $days, $filterString = '', $entries = [], $signatureTitles = [])
+    private function generatePdfHtml($title, $table, $timeSlots, $days, $filterString = '', $signatureRows = [])
     {
         $colorMap = [];
 
@@ -1360,7 +1264,6 @@ class ScheduleExportController extends Controller
         <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
         <style>
             body { font-family: "Arial", "DejaVu Sans"; direction: rtl; }
-            .header { margin-bottom: 10px; text-align: center; }
             .title { font-size: 22px; font-weight: bold; }
             .filters { font-size: 14px; font-weight: bold; margin-top: 5px; color: #555; }
             table { border-collapse: collapse; width: 100%; margin-top: 20px; }
@@ -1372,91 +1275,112 @@ class ScheduleExportController extends Controller
         </style>
     </head><body>';
 
-        $html .= '<div class="header">
-        <div class="title">'.htmlspecialchars($title).'</div>
-        <div style="font-size: 16px; margin-top: 5px;">للعام الجامعي '.date('Y').'/'.(date('Y') + 1).' - الفصل الدراسي الأول</div>';
+        // الترويسة: شعار الجامعة يميناً وشعار الكلية يساراً والعنوان بينهما
+        // (الجدول يميني، فالخلية الأولى تُعرض على يمين الصفحة).
+        $universityLogo = $this->getBase64Logo('du-logo.png');
+        $facultyLogo = $this->getBase64Logo('cai-logo.png');
 
-        // Add filter string if exists
+        $html .= '<table dir="rtl" style="width:100%; border:none; margin-top:0;"><tr>'
+            .'<td style="border:none; width:18%; text-align:center; vertical-align:middle;">'
+            .($universityLogo !== '' ? '<img src="'.$universityLogo.'" style="height:70px;" />' : '')
+            .'</td>'
+            .'<td style="border:none; width:64%; text-align:center; vertical-align:middle;">'
+            .'<div class="title">'.htmlspecialchars($title).'</div>'
+            .'<div style="font-size: 16px; margin-top: 5px;">للعام الجامعي '.date('Y').'/'.(date('Y') + 1).' - الفصل الدراسي الأول</div>';
+
         if (! empty($filterString)) {
             $html .= '<div class="filters">'.htmlspecialchars($filterString).'</div>';
         }
 
-        $html .= '</div>';
+        $html .= '</td>'
+            .'<td style="border:none; width:18%; text-align:center; vertical-align:middle;">'
+            .($facultyLogo !== '' ? '<img src="'.$facultyLogo.'" style="height:85px;" />' : '')
+            .'</td>'
+            .'</tr></table>';
 
-        // Rest of the table generation remains the same...
         $html .= '<table><thead><tr><th class="day-header">اليوم / الوقت</th>';
         foreach ($timeSlots as $slot) {
             $html .= '<th class="time-header">'.htmlspecialchars($slot).'</th>';
         }
         $html .= '</tr></thead><tbody>';
 
+        // كل كتلة في خلية مستقلة تحت بعضها، واليوم يتمدد بـ rowspan على كل صفوفه.
         foreach ($days as $day) {
-            $html .= '<tr><td class="day-header"><strong>'.htmlspecialchars($day).'</strong></td>';
-
+            $dayRowCount = 1;
             foreach ($timeSlots as $slot) {
-                $entry = $table[$day][$slot] ?? '';
-                if (empty($entry)) {
-                    $html .= '<td></td>';
-
-                    continue;
-                }
-
-                $backgroundColor = '#f0f0f0'; // Default color
-
-                if (! empty($entry['is_reserved'])) {
-                    $backgroundColor = '#e7e5e4';
-                } elseif (! empty($entry['is_blocker'])) {
-                    $backgroundColor = '#fee2e2';
-                } elseif (! empty($entry['course_key'])) {
-                    $courseKey = $entry['course_key'];
-                    $hslColor = $this->getCourseColor($courseKey, $colorMap);
-                    $backgroundColor = $this->hslToHex($hslColor, true); // PDF needs hex with #
-                }
-
-                $cellContent = '<div class="entry-content">'.implode('', $entry['html']).'</div>';
-                $html .= '<td style="background-color:'.$backgroundColor.';">'.$cellContent.'</td>';
+                $dayRowCount = max($dayRowCount, count($table[$day][$slot] ?? []));
             }
 
-            $html .= '</tr>';
+            for ($blockIndex = 0; $blockIndex < $dayRowCount; $blockIndex++) {
+                $html .= '<tr>';
+
+                if ($blockIndex === 0) {
+                    $dayRowspan = $dayRowCount > 1 ? ' rowspan="'.$dayRowCount.'"' : '';
+                    $html .= '<td class="day-header"'.$dayRowspan.'><strong>'.htmlspecialchars($day).'</strong></td>';
+                }
+
+                foreach ($timeSlots as $slot) {
+                    $blocks = $table[$day][$slot] ?? [];
+
+                    // فترة بلا كتل: خلية فارغة ممدودة على ارتفاع اليوم كاملاً
+                    // (نظير دمج الخلايا الفارغة في إكسل) حتى لا تظهر ثقوب
+                    // بلا إطار في الشبكة.
+                    if ($blocks === []) {
+                        if ($blockIndex === 0) {
+                            $emptyRowspan = $dayRowCount > 1 ? ' rowspan="'.$dayRowCount.'"' : '';
+                            $html .= '<td'.$emptyRowspan.' style="background-color:#f0f0f0;"></td>';
+                        }
+
+                        continue;
+                    }
+
+                    if ($blockIndex >= count($blocks)) {
+                        continue; // خلية ممدودة من صف سابق
+                    }
+
+                    $block = $blocks[$blockIndex];
+                    $rowspan = 1;
+                    if (count($blocks) === 1 && $dayRowCount > 1) {
+                        $rowspan = $dayRowCount;
+                    } elseif (count($blocks) > 1 && $blockIndex === count($blocks) - 1) {
+                        $rowspan = $dayRowCount - $blockIndex;
+                    }
+                    $rowspanAttr = $rowspan > 1 ? ' rowspan="'.$rowspan.'"' : '';
+
+                    $backgroundColor = '#f0f0f0'; // Default color
+
+                    if (! empty($block['is_reserved'])) {
+                        $backgroundColor = '#e7e5e4';
+                    } elseif (! empty($block['is_blocker'])) {
+                        $backgroundColor = '#fee2e2';
+                    } elseif (! empty($block['course_key'])) {
+                        $courseKey = $block['course_key'];
+                        $hslColor = $this->getCourseColor($courseKey, $colorMap);
+                        $backgroundColor = $this->hslToHex($hslColor, true); // PDF needs hex with #
+                    }
+
+                    $cellContent = '<div class="entry-content">'.implode('', $block['html']).'</div>';
+                    $html .= '<td'.$rowspanAttr.' style="background-color:'.$backgroundColor.';">'.$cellContent.'</td>';
+                }
+
+                $html .= '</tr>';
+            }
         }
 
         $html .= '</tbody></table>';
         $html .= '<div style="text-align:center; margin-top:20px; font-size:12px;">
         تم إنشاء الجدول في '.date('Y-m-d H:i').' | نظام جدولة المحاضرات
     </div>';
-        // Add metadata table before closing
-        $metadata = $this->calculateMetadata($entries);
 
-        $html .= '<div style="margin-top: 30px;">
-    <table style="width: 60%; margin: 0 auto;">
-        <thead>
-            <tr>
-                <th colspan="4" style="background-color: #DDEBF7; font-size: 16px; padding: 10px;">إحصائيات الجدول</th>
-            </tr>
-            <tr style="background-color: #E2EFDA;">
-                <th style="padding: 8px;">إجمالي الجلسات</th>
-                <th style="padding: 8px;">إجمالي المقررات</th>
-                <th style="padding: 8px;">إجمالي الغرف</th>
-                <th style="padding: 8px;">إجمالي أعضاء هيئة التدريس</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr style="background-color: #FFFFFF;">
-                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_sessions'].'</td>
-                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_courses'].'</td>
-                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_rooms'].'</td>
-                <td style="text-align: center; padding: 8px; font-weight: bold;">'.$metadata['total_staff'].'</td>
-            </tr>
-        </tbody>
-    </table>
-</div>';
-
-        // خانات التوقيع: صف واحد من اليمين إلى اليسار، عنوان كل مسؤول ومساحة فارغة تحته
-        if (! empty($signatureTitles)) {
+        // خانات التوقيع: العنوان، تحته مساحة فارغة للتوقيع، ثم اسم المسؤول
+        if (! empty($signatureRows)) {
             $signatureCells = '';
-            foreach ($signatureTitles as $signatureTitle) {
-                $signatureCells .= '<td dir="rtl" style="border: none; width: 33%; text-align: center; vertical-align: top; padding: 10px 20px 70px 20px;">'
-                    .'<div style="font-weight: bold; font-size: 14px;">'.htmlspecialchars($signatureTitle).'</div>'
+            foreach ($signatureRows as $signatureRow) {
+                $signatureCells .= '<td dir="rtl" style="border: none; width: 33%; text-align: center; vertical-align: top; padding: 10px 20px 0 20px;">'
+                    .'<div style="font-weight: bold; font-size: 14px;">'.htmlspecialchars($signatureRow['title']).'</div>'
+                    // المسافة الفارغة (&nbsp;) تمنع mPDF من طيّ الحاوية الفارغة
+                    .'<div style="height: 55px;">&nbsp;</div>'
+                    .'<div style="font-weight: bold; font-size: 13px;">'.htmlspecialchars($signatureRow['name']).'</div>'
                     .'</td>';
             }
             $html .= '<table dir="rtl" style="width: 100%; margin-top: 30px; page-break-inside: avoid;"><tr>'.$signatureCells.'</tr></table>';

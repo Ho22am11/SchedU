@@ -40,8 +40,11 @@ class ScheduleEntry extends Model
 
     /**
      * Set only on external entries (entry_kind = "external"); local course
-     * entries keep their course_ids arrays. The FK restricts while schedule
-     * history refers to the course.
+     * entries keep their course_ids arrays. There is no FK: the id may
+     * dangle after the course is deleted, and the baked external_course_*
+     * snapshot columns keep schedule history rendering regardless. This live
+     * relation is only the legacy fallback for rows written before the
+     * snapshots existed.
      */
     public function externalCourse()
     {

@@ -25,6 +25,7 @@ class ScheduleResource extends JsonResource
             'create_at' => $this->created_at,
             'updated_at' => $this->updated_at?->toISOString(),
             'reserved_period' => $this->reservedPeriod(),
+            'blockers' => $this->whenLoaded('blockers'),
             'entries' => EntryScheduleResource::collection($this->whenLoaded('entries')),
             'metadata' => $this->whenLoaded('entries', function () use ($entries) {
                 if (! $entries) {

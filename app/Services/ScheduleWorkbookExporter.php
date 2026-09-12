@@ -7,6 +7,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 class ScheduleWorkbookExporter
@@ -17,9 +18,8 @@ class ScheduleWorkbookExporter
         string $title,
         string $filterString,
         array $data,
-        array $entries,
         array &$colorMap,
-        array $signatureTitles = []
+        array $signatureRows = []
     ): void {
         $sheet = $spreadsheet->getSheetCount() === 1
             && $spreadsheet->getActiveSheet()->getTitle() === 'Worksheet'
@@ -32,24 +32,33 @@ class ScheduleWorkbookExporter
         $columnCount = count($data['timeSlots']) + 1;
         $lastColumn = Coordinate::stringFromColumnIndex($columnCount);
 
-        $sheet->mergeCells("A1:{$lastColumn}1");
-        $sheet->setCellValue('A1', $title);
-        $sheet->getStyle('A1')->applyFromArray([
+        // الصفوف 1-4 محجوزة لشعاري الجامعة والكلية (المثبّتين على الصف 1)
+        // حتى لا يتراكبا مع الجدول — العنوان وأسطر الفلاتر وأوراق الشبكة
+        // تنزل عنها. 4×17pt ≈ 90px تتسع لأطول شعار (85px).
+        $logoBandRows = 4;
+        for ($index = 1; $index <= $logoBandRows; $index++) {
+            $sheet->getRowDimension($index)->setRowHeight(17);
+        }
+        $titleRow = $logoBandRows + 1;
+
+        $sheet->mergeCells("A{$titleRow}:{$lastColumn}{$titleRow}");
+        $sheet->setCellValue("A{$titleRow}", $title);
+        $sheet->getStyle("A{$titleRow}")->applyFromArray([
             'font' => ['bold' => true, 'size' => 16],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']],
         ]);
 
-        $headerRow = 2;
+        $headerRow = $titleRow + 1;
         if ($filterString !== '') {
-            $sheet->mergeCells("A2:{$lastColumn}2");
-            $sheet->setCellValue('A2', $filterString);
-            $sheet->getStyle('A2')->applyFromArray([
+            $sheet->mergeCells("A{$headerRow}:{$lastColumn}{$headerRow}");
+            $sheet->setCellValue("A{$headerRow}", $filterString);
+            $sheet->getStyle("A{$headerRow}:{$lastColumn}{$headerRow}")->applyFromArray([
                 'font' => ['bold' => true, 'size' => 12],
                 'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E8F4FD']],
             ]);
-            $headerRow = 3;
+            $headerRow++;
         }
 
         $headerStyle = [
@@ -67,97 +76,60 @@ class ScheduleWorkbookExporter
             $sheet->getStyle("{$column}{$headerRow}")->applyFromArray($headerStyle);
         }
 
+        // كل كتلة في صف مستقل، واليوم (والخلايا الأقل امتلاءً) يتمدد بدمج
+        // رأسي على صفوف اليوم.
         $row = $headerRow + 1;
         foreach ($data['days'] as $day) {
+            $dayRowCount = 1;
+            foreach ($data['timeSlots'] as $slot) {
+                $dayRowCount = max($dayRowCount, count($data['table'][$day][$slot] ?? []));
+            }
+            $dayEndRow = $row + $dayRowCount - 1;
+
             $sheet->setCellValue("A{$row}", $day);
-            $sheet->getStyle("A{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:A{$dayEndRow}")->applyFromArray([
                 'font' => ['bold' => true],
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFF2CC']],
-                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
             ]);
+            if ($dayRowCount > 1) {
+                $sheet->mergeCells("A{$row}:A{$dayEndRow}");
+            }
 
             foreach ($data['timeSlots'] as $index => $slot) {
                 $column = Coordinate::stringFromColumnIndex($index + 2);
-                $cell = "{$column}{$row}";
-                $entry = $data['table'][$day][$slot] ?? '';
+                $blocks = $data['table'][$day][$slot] ?? [];
 
-                if (empty($entry)) {
-                    continue;
-                }
-
-                $sheet->setCellValue($cell, implode("\n", $entry['html']));
-                $sheet->getStyle($cell)->getAlignment()
-                    ->setWrapText(true)
-                    ->setVertical(Alignment::VERTICAL_CENTER)
-                    ->setHorizontal(Alignment::HORIZONTAL_CENTER);
-
-                if (! empty($entry['is_reserved'])) {
-                    $sheet->getStyle($cell)->getFill()
-                        ->setFillType(Fill::FILL_SOLID)
-                        ->getStartColor()
-                        ->setRGB('E7E5E4');
-                    $sheet->getStyle($cell)->getFont()->setBold(true);
+                if ($blocks === []) {
+                    if ($dayRowCount > 1) {
+                        $sheet->mergeCells("{$column}{$row}:{$column}{$dayEndRow}");
+                    }
 
                     continue;
                 }
 
-                if (! empty($entry['is_blocker'])) {
-                    $sheet->getStyle($cell)->getFill()
-                        ->setFillType(Fill::FILL_SOLID)
-                        ->getStartColor()
-                        ->setRGB('FEE2E2');
-                    $sheet->getStyle($cell)->getFont()->setBold(true);
+                foreach ($blocks as $blockIndex => $block) {
+                    $blockRow = $row + $blockIndex;
+                    $isLastBlock = $blockIndex === count($blocks) - 1;
+                    $blockEndRow = $isLastBlock ? $dayEndRow : $blockRow;
 
-                    continue;
-                }
-
-                $courseKey = $entry['course_key'] ?? '';
-                if ($courseKey !== '') {
-                    $sheet->getStyle($cell)->getFill()
-                        ->setFillType(Fill::FILL_SOLID)
-                        ->getStartColor()
-                        ->setRGB($this->courseColor($courseKey, $colorMap));
+                    $this->renderBlockCell($sheet, $column, $blockRow, $blockEndRow, $block, $colorMap);
                 }
             }
 
-            $row++;
+            $row = $dayEndRow + 1;
         }
 
-        $metadata = $this->metadata($entries);
-        $metadataStartRow = $row + 2;
-        $sheet->mergeCells("A{$metadataStartRow}:D{$metadataStartRow}");
-        $sheet->setCellValue("A{$metadataStartRow}", 'إحصائيات الجدول');
-        $sheet->getStyle("A{$metadataStartRow}")->applyFromArray([
-            'font' => ['bold' => true, 'size' => 14],
-            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DDEBF7']],
-        ]);
-
-        $metadataHeaders = ['إجمالي الجلسات', 'إجمالي المقررات', 'إجمالي الغرف', 'إجمالي أعضاء هيئة التدريس'];
-        $metadataValues = [$metadata['total_sessions'], $metadata['total_courses'], $metadata['total_rooms'], $metadata['total_staff']];
-        $metadataHeaderRow = $metadataStartRow + 1;
-
-        foreach ($metadataHeaders as $index => $header) {
-            $column = Coordinate::stringFromColumnIndex($index + 1);
-            $sheet->setCellValue("{$column}{$metadataHeaderRow}", $header);
-            $sheet->setCellValue("{$column}".($metadataHeaderRow + 1), $metadataValues[$index]);
-            $sheet->getStyle("{$column}{$metadataHeaderRow}")->applyFromArray([
-                'font' => ['bold' => true],
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E2EFDA']],
-                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
-            ]);
-            $sheet->getStyle("{$column}".($metadataHeaderRow + 1))->getAlignment()
-                ->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $sheet->getStyle("{$column}".($metadataHeaderRow + 1))->getFont()->setBold(true);
-            $sheet->getColumnDimension($column)->setWidth(25);
-        }
-
-        $sheet->getStyle("A{$metadataStartRow}:D".($metadataHeaderRow + 1))
-            ->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        // Table borders span the whole grid; merged cells pick up their
+        // perimeter from the underlying edge cells.
         $sheet->getStyle("A{$headerRow}:{$lastColumn}".($row - 1))
             ->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $this->addSignatures($sheet, $signatureTitles, $metadataHeaderRow + 3, $columnCount);
+        // الشعارات: الجامعة يميناً والكلية يساراً (الورقة يمينية، فالعمود A
+        // يظهر يميناً وآخر عمود يساراً).
+        $this->addLogos($sheet, $columnCount);
+
+        $this->addSignatures($sheet, $signatureRows, $row + 1, $columnCount);
 
         $sheet->getColumnDimension('A')->setWidth(20);
         for ($index = 2; $index <= $columnCount; $index++) {
@@ -168,26 +140,114 @@ class ScheduleWorkbookExporter
         }
     }
 
-    // خانات التوقيع: صف واحد من اليمين إلى اليسار (الورقة RTL فعمود A يظهر يميناً)
-    public function addSignatures(
+    private function renderBlockCell(
         Worksheet $sheet,
-        array $signatureTitles,
+        string $column,
         int $startRow,
-        int $columnCount
+        int $endRow,
+        array $block,
+        array &$colorMap
     ): void {
-        if ($signatureTitles === []) {
+        $cell = "{$column}{$startRow}";
+        $sheet->setCellValue($cell, implode("\n", $block['html']));
+        $sheet->getStyle($cell)->getAlignment()
+            ->setWrapText(true)
+            ->setVertical(Alignment::VERTICAL_CENTER)
+            ->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+        if ($endRow > $startRow) {
+            $sheet->mergeCells("{$column}{$startRow}:{$column}{$endRow}");
+        }
+
+        if (! empty($block['is_reserved'])) {
+            $fill = $sheet->getStyle("{$cell}:{$column}{$endRow}")->getFill();
+            $fill->setFillType(Fill::FILL_SOLID);
+            $fill->getStartColor()->setRGB('E7E5E4');
+            $sheet->getStyle($cell)->getFont()->setBold(true);
+
             return;
         }
 
-        $signatureRow = $startRow;
-        $sheet->getRowDimension($signatureRow + 1)->setRowHeight(60);
+        if (! empty($block['is_blocker'])) {
+            $fill = $sheet->getStyle("{$cell}:{$column}{$endRow}")->getFill();
+            $fill->setFillType(Fill::FILL_SOLID);
+            $fill->getStartColor()->setRGB('FEE2E2');
+            $sheet->getStyle($cell)->getFont()->setBold(true);
 
-        foreach ($signatureTitles as $index => $signatureTitle) {
+            return;
+        }
+
+        $courseKey = $block['course_key'] ?? '';
+        if ($courseKey !== '') {
+            $fill = $sheet->getStyle("{$cell}:{$column}{$endRow}")->getFill();
+            $fill->setFillType(Fill::FILL_SOLID);
+            $fill->getStartColor()->setRGB($this->courseColor($courseKey, $colorMap));
+        }
+    }
+
+    /**
+     * شعارا الجامعة والكلية على كل ورقة: الجامعة يُثبَّت على A1 (يمين
+     * الصفحة في الورقة اليمينية) والكلية على آخر عمود (يسار الصفحة).
+     */
+    public function addLogos(Worksheet $sheet, int $columnCount): void
+    {
+        $this->appendLogo($sheet, 'du-logo.png', 'A1', 70);
+        $this->appendLogo(
+            $sheet,
+            'cai-logo.png',
+            Coordinate::stringFromColumnIndex($columnCount).'1',
+            85
+        );
+    }
+
+    private function appendLogo(Worksheet $sheet, string $filename, string $coordinate, int $height): void
+    {
+        $path = storage_path('app/public/'.$filename);
+        if (! file_exists($path)) {
+            return;
+        }
+
+        $drawing = new Drawing;
+        $drawing->setPath($path);
+        $drawing->setHeight($height);
+        $drawing->setCoordinates($coordinate);
+        $drawing->setOffsetY(2);
+        $sheet->getDrawingCollection()->append($drawing);
+    }
+
+    /**
+     * خانات التوقيع: صف واحد من اليمين إلى اليسار (الورقة RTL فعمود A يظهر
+     * يميناً) — العنوان، تحته مساحة فارغة للتوقيع، ثم اسم المسؤول.
+     *
+     * @param  array<int, array{title: string, name: string}>  $signatureRows
+     */
+    public function addSignatures(
+        Worksheet $sheet,
+        array $signatureRows,
+        int $startRow,
+        int $columnCount
+    ): void {
+        if ($signatureRows === []) {
+            return;
+        }
+
+        $titleRow = $startRow;
+        $signRow = $startRow + 1;
+        $nameRow = $startRow + 2;
+        $sheet->getRowDimension($signRow)->setRowHeight(60);
+
+        foreach ($signatureRows as $index => $signatureRow) {
             $column = Coordinate::stringFromColumnIndex($this->signatureColumnIndex($index, $columnCount) + 1);
 
-            $sheet->setCellValue($column.$signatureRow, $signatureTitle);
-            $sheet->getStyle($column.$signatureRow)->applyFromArray([
+            $sheet->setCellValue($column.$titleRow, $signatureRow['title']);
+            $sheet->getStyle($column.$titleRow)->applyFromArray([
                 'font' => ['bold' => true, 'size' => 12],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+            ]);
+
+            $sheet->setCellValue($column.$nameRow, $signatureRow['name']);
+            $sheet->getStyle($column.$nameRow)->applyFromArray([
+                'font' => ['bold' => true, 'size' => 11],
                 'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
             ]);
         }
@@ -275,38 +335,5 @@ class ScheduleWorkbookExporter
         };
 
         return sprintf('%02X%02X%02X', round($convert($hue + 1 / 3) * 255), round($convert($hue) * 255), round($convert($hue - 1 / 3) * 255));
-    }
-
-    private function metadata(array $entries): array
-    {
-        $courses = [];
-        $rooms = [];
-        $staff = [];
-
-        foreach ($entries as $entry) {
-            foreach ($entry['course_ids'] ?? [] as $courseId) {
-                $courses[$courseId] = true;
-            }
-            // External courses count as subjects too.
-            if (! empty($entry['external_course_id'])) {
-                $courses['external_'.$entry['external_course_id']] = true;
-            }
-            if (! empty($entry['hall']['id'])) {
-                $rooms['hall_'.$entry['hall']['id']] = true;
-            }
-            if (! empty($entry['lap']['id'])) {
-                $rooms['lab_'.$entry['lap']['id']] = true;
-            }
-            if (! empty($entry['lecturer']['id'])) {
-                $staff[$entry['lecturer']['id']] = true;
-            }
-        }
-
-        return [
-            'total_sessions' => count($entries),
-            'total_courses' => count($courses),
-            'total_rooms' => count($rooms),
-            'total_staff' => count($staff),
-        ];
     }
 }

@@ -32,6 +32,17 @@ class StoreScheduleRequest extends FormRequest
             'reserved_period.day' => 'required_with:reserved_period|in:sunday,monday,tuesday,wednesday,thursday',
             'reserved_period.start_time' => 'required_with:reserved_period|date_format:H:i',
             'reserved_period.end_time' => 'required_with:reserved_period|date_format:H:i|after:reserved_period.start_time',
+
+            // Blockers baked into the schedule by the generation (the engine
+            // sends the staff templates it enforced). Grid + duplicate rules
+            // run in the controller via ValidatesBlockers.
+            'blockers' => 'nullable|array',
+            'blockers.*.lecturer_id' => ['required_with:blockers', 'integer', 'exists:lecturers,id'],
+            'blockers.*.day' => ['required_with:blockers', 'in:sunday,monday,tuesday,wednesday,thursday'],
+            'blockers.*.startTime' => ['required_with:blockers', 'date_format:H:i'],
+            'blockers.*.endTime' => ['required_with:blockers', 'date_format:H:i'],
+            'blockers.*.label' => ['required_with:blockers', 'string', 'max:191'],
+
             'schedule' => 'required|array|min:1',
 
             // Source discriminator: absent/null/anything-but-"external" keeps

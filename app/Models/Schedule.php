@@ -21,6 +21,11 @@ class Schedule extends Model
         return $this->hasMany(ScheduleEntry::class);
     }
 
+    public function blockers()
+    {
+        return $this->hasMany(ScheduleBlocker::class);
+    }
+
     public function sourceSchedule()
     {
         return $this->belongsTo(self::class, 'source_schedule_id');
